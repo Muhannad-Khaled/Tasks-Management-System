@@ -95,6 +95,23 @@ def test_tables_are_extracted_from_structured_formats():
     assert _parse("sow_a_cairomart", "pdf", "SOW-001").table_count >= 3
 
 
+@pytest.mark.parametrize("ext", ["docx", "pdf"])
+def test_tables_are_attributed_to_the_section_they_appear_in(ext):
+    # Regression: PDF tables were emitted before their page's prose, which filed
+    # them under the preamble and made every citation from them point at the
+    # wrong section.
+    doc = _parse("sow_a_cairomart", ext, "SOW-001")
+    placements = {
+        section.title: chunk.text
+        for section, chunk in doc.iter_chunks()
+        if chunk.is_table or "Participating branches" in chunk.text or "Milestone" in chunk.text
+    }
+    commercial = [t for t in placements if t.startswith("4.")]
+    milestones = [t for t in placements if t.startswith("8.")]
+    assert commercial and "Participating branches" in placements[commercial[0]]
+    assert milestones and "Go-live" in placements[milestones[0]]
+
+
 def test_empty_document_fails_validation(tmp_path):
     empty = tmp_path / "empty.txt"
     empty.write_text("nothing here", encoding="utf-8")

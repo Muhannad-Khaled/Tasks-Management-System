@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api import health
+from app.api import health, projects
 
 app = FastAPI(
     title="SOW-to-Project Execution Platform",
@@ -9,3 +9,4 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
+app.include_router(projects.router)

@@ -208,18 +208,23 @@ def parse_pdf(path: Path, doc_key: str) -> ParsedDocument:
 
         # First pass: text lines and tables per page, ignoring lines that fall
         # inside a table since extract_tables already captured that content.
-        pages: list[tuple[int, list[dict], list[list[str]]]] = []
+        # Tables carry their vertical position so they can be interleaved with
+        # the surrounding prose — a table emitted out of order gets attributed
+        # to the wrong section and its citations point at the wrong place.
+        pages: list[tuple[int, list[dict], list[tuple[float, list[str]]]]] = []
         all_gaps: list[float] = []
         for page_no, page in enumerate(pdf.pages, start=1):
-            table_regions = [t.bbox for t in page.find_tables()]
-            tables = [
-                [
+            found = page.find_tables()
+            table_regions = [t.bbox for t in found]
+            tables: list[tuple[float, list[str]]] = []
+            for table_obj, table in zip(found, page.extract_tables() or []):
+                rows = [
                     " | ".join((cell or "").strip() for cell in row)
                     for row in table
                     if any(cell for cell in row)
                 ]
-                for table in page.extract_tables() or []
-            ]
+                if rows:
+                    tables.append((table_obj.bbox[1], rows))
             lines = [
                 ln
                 for ln in (page.extract_text_lines() or [])
@@ -237,30 +242,36 @@ def parse_pdf(path: Path, doc_key: str) -> ParsedDocument:
         break_threshold = _paragraph_gap_threshold(all_gaps)
 
         for page_no, lines, tables in pages:
-            for rows in tables:
-                if rows:
-                    blocks.append(("\n".join(rows), page_no, True))
-
             buffer: list[str] = []
             previous_top: float | None = None
+            pending_tables = sorted(tables, key=lambda t: t[0])
+
+            def flush() -> None:
+                nonlocal buffer
+                if buffer:
+                    blocks.append((" ".join(buffer).strip(), page_no, False))
+                    buffer = []
+
             for line in lines:
                 text = line["text"].strip()
                 if not text:
                     continue
+                # Emit any table that sits above this line before the line itself.
+                while pending_tables and pending_tables[0][0] <= line["top"]:
+                    flush()
+                    blocks.append(("\n".join(pending_tables.pop(0)[1]), page_no, True))
                 gap = (line["top"] - previous_top) if previous_top is not None else 0.0
                 previous_top = line["top"]
                 if looks_like_heading(text):
-                    if buffer:
-                        blocks.append((" ".join(buffer).strip(), page_no, False))
-                        buffer = []
+                    flush()
                     blocks.append((text, page_no, False))
                     continue
                 if buffer and gap > break_threshold:
-                    blocks.append((" ".join(buffer).strip(), page_no, False))
-                    buffer = []
+                    flush()
                 buffer.append(text)
-            if buffer:
-                blocks.append((" ".join(buffer).strip(), page_no, False))
+            flush()
+            for _, rows in pending_tables:
+                blocks.append(("\n".join(rows), page_no, True))
     return _blocks_to_document(blocks, doc_key, path.name, "pdf", page_count=page_count)
 
 
