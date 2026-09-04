@@ -36,8 +36,26 @@ class LLMError(RuntimeError):
     pass
 
 
-class RateLimited(LLMError):
-    pass
+class TransientLLMError(LLMError):
+    """Retryable: rate limits and the API's own temporary failures."""
+
+
+# Quota exhaustion and "model overloaded" both resolve by waiting, so both are
+# retried. A 503 during extraction is common on popular models and must not
+# surface to the user as a failed upload.
+_TRANSIENT_MARKERS = (
+    "429",
+    "quota",
+    "resource_exhausted",
+    "500",
+    "502",
+    "503",
+    "504",
+    "unavailable",
+    "overloaded",
+    "high demand",
+    "internal error",
+)
 
 
 def _hash_input(prompt_text: str, model: str, schema_name: str) -> str:
@@ -81,9 +99,9 @@ class GeminiClient:
         raise LLMError(f"No usable Gemini model found. Available: {available[:10]}")
 
     @retry(
-        retry=retry_if_exception_type(RateLimited),
+        retry=retry_if_exception_type(TransientLLMError),
         wait=wait_exponential(multiplier=2, min=4, max=60),
-        stop=stop_after_attempt(4),
+        stop=stop_after_attempt(5),
         reraise=True,
     )
     def _generate(self, prompt_text: str, system: str, schema: type[BaseModel]) -> str:
@@ -104,9 +122,11 @@ class GeminiClient:
                 ),
             )
         except Exception as exc:  # google-genai raises transport-specific errors
-            if any(s in str(exc).lower() for s in ("429", "quota", "resource_exhausted")):
-                raise RateLimited(str(exc)) from exc
-            raise LLMError(str(exc)) from exc
+            message = str(exc)
+            if any(marker in message.lower() for marker in _TRANSIENT_MARKERS):
+                logger.warning("Transient Gemini error, will retry: %s", message[:200])
+                raise TransientLLMError(message) from exc
+            raise LLMError(message) from exc
         if not response.text:
             raise LLMError("Gemini returned an empty response")
         return response.text
@@ -168,6 +188,8 @@ def build_chunked_text(doc) -> str:
         if section is not current_section:
             lines.append(f"\n## {section.title}")
             current_section = section
-        page = f" p{chunk.page}" if chunk.page else ""
-        lines.append(f"[{doc.chunk_key(section, chunk)}{page}] {chunk.text}")
+        # The page must sit outside the bracket: anything inside gets copied
+        # verbatim as the citation key, which then matches no chunk at all.
+        page = f"(page {chunk.page}) " if chunk.page else ""
+        lines.append(f"[{doc.chunk_key(section, chunk)}] {page}{chunk.text}")
     return "\n".join(lines)

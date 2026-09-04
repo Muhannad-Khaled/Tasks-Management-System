@@ -6,11 +6,28 @@ so they are written first and every task records the keys it cites.
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy.orm import Session
 
 from app.ingestion.parser import ParsedDocument
 from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument, SOWSection
 from app.schemas.sow import StructuredSOW
+
+
+_CHUNK_KEY = re.compile(r"[A-Za-z0-9_.-]*SOW[A-Za-z0-9_.-]*-S\d+-C\d+", re.IGNORECASE)
+
+
+def normalize_citation(raw: str) -> str:
+    """Pull the canonical chunk key out of whatever the model emitted.
+
+    Models decorate citations — a trailing page number, surrounding brackets,
+    stray whitespace. Comparing those raw against the document's keys silently
+    discards every citation and leaves tasks with no evidence, which is the one
+    failure this system cannot afford to have happen quietly.
+    """
+    match = _CHUNK_KEY.search(raw.strip().strip("[]()"))
+    return match.group(0) if match else raw.strip()
 
 
 def persist_document(
@@ -79,7 +96,8 @@ def persist_extraction(
 
     tasks_by_extracted_id: dict[str, ProjectTask] = {}
     for extracted in extraction.tasks:
-        valid_keys = [k for k in extracted.source_chunk_keys if k in chunks_by_key]
+        cited = [normalize_citation(k) for k in extracted.source_chunk_keys]
+        valid_keys = [k for k in cited if k in chunks_by_key]
         section_id = None
         if valid_keys:
             section_id = chunks_by_key[valid_keys[0]].section_id
@@ -112,6 +130,6 @@ def persist_extraction(
 
 def invented_citations(extraction: StructuredSOW, chunks_by_key: dict[str, SOWChunk]) -> list[str]:
     """Citation keys the model produced that do not exist in the document."""
-    cited = {k for t in extraction.tasks for k in t.source_chunk_keys}
-    cited |= {k for r in extraction.requirements for k in r.source_chunk_keys}
+    cited = {normalize_citation(k) for t in extraction.tasks for k in t.source_chunk_keys}
+    cited |= {normalize_citation(k) for r in extraction.requirements for k in r.source_chunk_keys}
     return sorted(cited - set(chunks_by_key))
