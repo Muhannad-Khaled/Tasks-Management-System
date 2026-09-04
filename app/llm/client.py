@@ -55,6 +55,7 @@ class GeminiClient:
             )
         self.client = genai.Client(api_key=self.api_key)
         self.model = model or settings.gemini_model
+        self._model_resolved = False
 
     def list_models(self) -> list[str]:
         return [
@@ -65,6 +66,7 @@ class GeminiClient:
 
     def resolve_model(self) -> str:
         """Confirm the configured model exists, else fall back to the best Flash."""
+        self._model_resolved = True
         available = self.list_models()
         if self.model in available:
             return self.model
@@ -85,6 +87,11 @@ class GeminiClient:
         reraise=True,
     )
     def _generate(self, prompt_text: str, system: str, schema: type[BaseModel]) -> str:
+        # Resolve lazily on first use: the brief's model name may not exist, and
+        # discovering that at generation time yields a confusing 404 instead of
+        # a clean fallback.
+        if not self._model_resolved:
+            self.resolve_model()
         try:
             response = self.client.models.generate_content(
                 model=self.model,
