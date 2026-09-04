@@ -25,10 +25,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.core.db import SessionLocal  # noqa: E402
-from app.graph.workflow import run_sow_pipeline  # noqa: E402
-from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument  # noqa: E402
-from app.schemas.enums import ProjectStatus  # noqa: E402
+from app.core.db import SessionLocal
+from app.graph.workflow import run_sow_pipeline
+from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument
+from app.schemas.enums import ProjectStatus
 
 CORPUS = Path(__file__).parent.parent / "data" / "sample_sows"
 GOLD = CORPUS / "gold"

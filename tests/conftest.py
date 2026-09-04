@@ -33,8 +33,8 @@ def _ensure_test_database() -> None:
 _ensure_test_database()
 os.environ["DATABASE_URL"] = _TEST_URL
 
-from app.core.db import Base, SessionLocal, engine  # noqa: E402
-from tests.factories import CORPUS, StubLLM  # noqa: E402
+from app.core.db import Base, SessionLocal, engine
+from tests.factories import CORPUS, StubLLM
 
 __all__ = ["CORPUS", "StubLLM"]
 

@@ -14,7 +14,6 @@ from app.ingestion.parser import ParsedDocument
 from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument, SOWSection
 from app.schemas.sow import StructuredSOW
 
-
 _CHUNK_KEY = re.compile(r"[A-Za-z0-9_.-]*SOW[A-Za-z0-9_.-]*-S\d+-C\d+", re.IGNORECASE)
 
 
