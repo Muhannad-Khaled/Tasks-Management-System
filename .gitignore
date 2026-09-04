@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+uploads/
+chroma_data/
+pg_data/
+.streamlit/secrets.toml

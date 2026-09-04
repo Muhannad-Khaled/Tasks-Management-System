@@ -1,0 +1,47 @@
+[project]
+name = "sow-platform"
+version = "0.1.0"
+description = "AI-Powered SOW-to-Project Execution Platform for loyalty points companies"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "langgraph>=0.2",
+    "google-genai>=1.0",
+    "networkx>=3.3",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "httpx>=0.27",
+    "streamlit>=1.38",
+    "tenacity>=9.0",
+]
+
+[project.optional-dependencies]
+rag = [
+    "chromadb>=0.5",
+    "sentence-transformers>=3.0",
+]
+pdfgen = [
+    "reportlab>=4.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
