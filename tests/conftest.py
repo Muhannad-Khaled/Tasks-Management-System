@@ -1,21 +1,50 @@
 """Shared fixtures.
 
-Tests run against a real PostgreSQL (docker compose up -d) but never against a
-real LLM: extraction is stubbed so the pipeline is testable offline, in CI, and
-without consuming the Gemini free-tier quota.
+Tests run against their own PostgreSQL database, never the development one:
+the cleanup between tests truncates every table, which would otherwise delete
+real extraction results. The override must happen before app.core.db is
+imported, since the engine is created at import time.
+
+Tests never call a real LLM either — extraction is stubbed in factories.py, so
+the suite runs offline and consumes no Gemini quota.
 """
 
-import pytest
-from sqlalchemy import text
+import os
 
-from app.core.db import Base, SessionLocal, engine
-from tests.factories import CORPUS, StubLLM
+import pytest
+from sqlalchemy import create_engine, text
+
+_DEV_URL = os.environ.get("DATABASE_URL") or "postgresql+psycopg://sow:sow@localhost:5432/sow_platform"
+TEST_DB = "sow_platform_test"
+_TEST_URL = _DEV_URL.rsplit("/", 1)[0] + f"/{TEST_DB}"
+
+
+def _ensure_test_database() -> None:
+    admin = create_engine(_DEV_URL.rsplit("/", 1)[0] + "/postgres", isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        exists = conn.execute(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": TEST_DB}
+        ).scalar()
+        if not exists:
+            conn.execute(text(f'CREATE DATABASE "{TEST_DB}"'))
+    admin.dispose()
+
+
+_ensure_test_database()
+os.environ["DATABASE_URL"] = _TEST_URL
+
+from app.core.db import Base, SessionLocal, engine  # noqa: E402
+from tests.factories import CORPUS, StubLLM  # noqa: E402
 
 __all__ = ["CORPUS", "StubLLM"]
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema():
+    assert engine.url.database == TEST_DB, (
+        f"tests must not run against {engine.url.database!r}; "
+        "the cleanup step truncates every table"
+    )
     Base.metadata.create_all(engine)
     yield
 
@@ -25,7 +54,7 @@ def db():
     session = SessionLocal()
     yield session
     session.rollback()
-    # Keep the database clean between tests; order respects foreign keys.
+    # Order respects foreign keys.
     for table in [
         "task_dependencies",
         "project_tasks",
