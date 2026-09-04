@@ -134,10 +134,11 @@ def render_project(project_id: str, projects: list[dict]) -> None:
             st.success("Already pushed to Trello.")
         approved = project["status"] in {"approved", "synced"}
         if not approved:
-            if st.button("Approve project", type="primary"):
-                if api("POST", f"/projects/{project_id}/approve"):
-                    st.success("Approved.")
-                    st.rerun()
+            if st.button("Approve project", type="primary") and api(
+                "POST", f"/projects/{project_id}/approve"
+            ):
+                st.success("Approved.")
+                st.rerun()
         else:
             st.success("Approved by PM.")
             if st.button("Push to Trello", type="primary"):

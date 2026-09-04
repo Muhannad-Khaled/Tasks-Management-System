@@ -81,8 +81,10 @@ def make_extract_node(client: GeminiClient, db: Session):
 def make_persist_node(db: Session):
     def _node_persist(state: SOWState) -> SOWState:
         project = db.get(Project, state["project_id"])
+        if project is None:
+            raise ValueError(f"Project {state['project_id']} disappeared mid-pipeline")
         doc = state["parsed_doc"]
-        sow_doc, chunks_by_key = persist_document(
+        _, chunks_by_key = persist_document(
             db, project, doc, state["file_path"], state["parsing_status"]
         )
         extraction = state["extraction"]

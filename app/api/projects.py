@@ -81,8 +81,13 @@ def upload_sow(file: UploadFile = File(...), db: Session = Depends(get_db)) -> U
     try:
         state = run_sow_pipeline(db, project.id, str(stored), _next_doc_key(db))
     except LLMError as exc:
-        project.status = ProjectStatus.EXTRACTING
+        # Extraction failed before anything was persisted, so the project row is
+        # empty. Leaving it behind would litter the project list with shells
+        # that can never be approved or pushed.
+        db.rollback()
+        db.delete(project)
         db.commit()
+        stored.unlink(missing_ok=True)
         raise HTTPException(502, f"Extraction failed: {exc}") from exc
 
     if error := state.get("error"):

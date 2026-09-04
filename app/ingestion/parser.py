@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 import pdfplumber
@@ -72,7 +73,7 @@ def looks_like_heading(line: str) -> str | None:
     if not stripped or len(stripped) > 120:
         return None
     for pattern in (_EMAILISH_HEADING, _NUMBERED_HEADING, _ALLCAPS_HEADING):
-        if match := pattern.match(stripped):
+        if pattern.match(stripped):
             # A numbered line ending in a period is usually a sentence, not a heading.
             if pattern is _NUMBERED_HEADING and stripped.endswith("."):
                 return None
@@ -201,6 +202,47 @@ def _paragraph_gap_threshold(gaps: list[float]) -> float:
     return min(gaps) * 1.25
 
 
+def _page_blocks(
+    page_no: int,
+    lines: list[dict],
+    tables: list[tuple[float, list[str]]],
+    break_threshold: float,
+) -> list[tuple[str, int | None, bool]]:
+    """Fold one page's lines and tables into ordered (text, page, is_table) blocks."""
+    blocks: list[tuple[str, int | None, bool]] = []
+    buffer: list[str] = []
+    previous_top: float | None = None
+    pending = sorted(tables, key=lambda t: t[0])
+
+    def flush() -> None:
+        nonlocal buffer
+        if buffer:
+            blocks.append((" ".join(buffer).strip(), page_no, False))
+            buffer = []
+
+    for line in lines:
+        text = line["text"].strip()
+        if not text:
+            continue
+        # Emit any table that sits above this line before the line itself.
+        while pending and pending[0][0] <= line["top"]:
+            flush()
+            blocks.append(("\n".join(pending.pop(0)[1]), page_no, True))
+        gap = (line["top"] - previous_top) if previous_top is not None else 0.0
+        previous_top = line["top"]
+        if looks_like_heading(text):
+            flush()
+            blocks.append((text, page_no, False))
+            continue
+        if buffer and gap > break_threshold:
+            flush()
+        buffer.append(text)
+    flush()
+    for _, rows in pending:
+        blocks.append(("\n".join(rows), page_no, True))
+    return blocks
+
+
 def parse_pdf(path: Path, doc_key: str) -> ParsedDocument:
     blocks: list[tuple[str, int | None, bool]] = []
     with pdfplumber.open(path) as pdf:
@@ -234,7 +276,7 @@ def parse_pdf(path: Path, doc_key: str) -> ParsedDocument:
                 )
             ]
             all_gaps += [
-                b["top"] - a["top"] for a, b in zip(lines, lines[1:]) if b["top"] > a["top"]
+                b["top"] - a["top"] for a, b in pairwise(lines) if b["top"] > a["top"]
             ]
             pages.append((page_no, lines, tables))
 
@@ -242,36 +284,7 @@ def parse_pdf(path: Path, doc_key: str) -> ParsedDocument:
         break_threshold = _paragraph_gap_threshold(all_gaps)
 
         for page_no, lines, tables in pages:
-            buffer: list[str] = []
-            previous_top: float | None = None
-            pending_tables = sorted(tables, key=lambda t: t[0])
-
-            def flush() -> None:
-                nonlocal buffer
-                if buffer:
-                    blocks.append((" ".join(buffer).strip(), page_no, False))
-                    buffer = []
-
-            for line in lines:
-                text = line["text"].strip()
-                if not text:
-                    continue
-                # Emit any table that sits above this line before the line itself.
-                while pending_tables and pending_tables[0][0] <= line["top"]:
-                    flush()
-                    blocks.append(("\n".join(pending_tables.pop(0)[1]), page_no, True))
-                gap = (line["top"] - previous_top) if previous_top is not None else 0.0
-                previous_top = line["top"]
-                if looks_like_heading(text):
-                    flush()
-                    blocks.append((text, page_no, False))
-                    continue
-                if buffer and gap > break_threshold:
-                    flush()
-                buffer.append(text)
-            flush()
-            for _, rows in pending_tables:
-                blocks.append(("\n".join(rows), page_no, True))
+            blocks += _page_blocks(page_no, lines, tables, break_threshold)
     return _blocks_to_document(blocks, doc_key, path.name, "pdf", page_count=page_count)
 
 

@@ -101,9 +101,10 @@ def persist_extraction(
     for extracted in extraction.tasks:
         task = tasks_by_extracted_id[extracted.task_id]
         for dependency_id in extracted.depends_on:
-            if upstream := tasks_by_extracted_id.get(dependency_id):
-                if upstream.id != task.id:
-                    task.depends_on.append(upstream)
+            upstream = tasks_by_extracted_id.get(dependency_id)
+            # Unknown ids are dropped and self-dependencies would deadlock the graph.
+            if upstream is not None and upstream.id != task.id:
+                task.depends_on.append(upstream)
 
     db.commit()
     return list(tasks_by_extracted_id.values())

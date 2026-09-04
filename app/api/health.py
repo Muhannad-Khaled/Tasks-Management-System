@@ -12,6 +12,6 @@ def health() -> dict:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         db_status = "up"
-    except Exception:
+    except Exception:  # noqa: BLE001 - a health probe must report, never raise
         db_status = "down"
     return {"status": "ok", "database": db_status}

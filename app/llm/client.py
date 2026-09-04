@@ -8,7 +8,6 @@ same input hit the cache instead of the free-tier rate limit.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import time
 from typing import TypeVar

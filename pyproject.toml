@@ -45,3 +45,7 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's Depends()/File() in argument defaults is the framework's idiom.
+"app/api/*.py" = ["B008"]

@@ -11,7 +11,6 @@ from app.graph.workflow import build_graph, run_sow_pipeline
 from app.ingestion.parser import parse_document
 from app.models import Assumption, Project, ProjectTask, SOWChunk
 from app.schemas.enums import ProjectStatus
-
 from tests.factories import CORPUS, StubLLM
 
 
