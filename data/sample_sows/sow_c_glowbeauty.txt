@@ -1,0 +1,55 @@
+GlowBeauty loyalty project - scope doc v3 FINAL (2)
+===================================================
+
+1. BACKGROUND
+-------------
+
+GlowBeauty is a cosmetics retailer with stores in Cairo, Alexandria and New Cairo. they want a loyalty program. This document captures the scope as discussed in the meetings of August 12 and August 19.
+
+THIS DOCUMENT SUPERSEDES ALL PREVIOUS VERSIONS INCLUDING v2 AND THE DRAFT SHARED BY EMAIL ON AUGUST 14.
+
+2. What we agreed
+-----------------
+
+Customers get points when they buy stuff. The earn rate is 5 points per 1 USD (see pricing annex — TBD).
+
+GlowBeauty wants 12 offers for launch, possibly 15 if the marketing team approves the extra budget. For planning purposes assume 12.
+
+Go-live is expected in Q1 2027.
+
+2.1 Offers
+----------
+
+Offer list to be provided by GlowBeauty marketing. Each offer needs: name, discount value, eligible products, validity window.
+
+Offer list to be provided by GlowBeauty marketing. Each offer needs: name, discount value, eligible products, validity window.
+
+4. Technical stuff
+------------------
+
+POS integration via API. GlowBeauty uses RetailSoft POS v11 in most stores; the New Cairo store still runs v9 which may not support the webhook module.
+
+Auth: to be confirmed with GlowBeauty IT. Probably API keys.
+
+Store                POS version  Integration ready?              
+-------------------  -----------  --------------------------------
+Cairo Downtown       v11          yes                             
+Alexandria Corniche  v11          yes                             
+New Cairo            v9           NO - needs upgrade or workaround
+
+FWD: RE: RE: training dates
+---------------------------
+
+From: Dina (GlowBeauty HR) — 'we can only release store staff for training on Mondays, and not during the December sale season. please plan accordingly.' Sent from my iPhone.
+
+5. Timeline
+-----------
+
+Kickoff: November 2026. Go-live: 15 January 2027.
+
+Note: the commercial team believes the January date is aggressive given the POS upgrade situation in New Cairo.
+
+6. Legal boilerplate
+--------------------
+
+This document is provided for discussion purposes and does not constitute a binding commitment. All deliverables are subject to the master services agreement between the parties, as amended from time to time. Nothing in this document shall be construed to limit either party's rights under applicable law.

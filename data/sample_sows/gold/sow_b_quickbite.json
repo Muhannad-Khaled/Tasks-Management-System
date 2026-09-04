@@ -1,0 +1,42 @@
+{
+  "doc": "sow_b_quickbite",
+  "profile": "gappy",
+  "project_info": {
+    "project_name": "QuickBite Restaurants Loyalty Launch",
+    "merchant_name": "QuickBite Restaurants",
+    "start_date": null,
+    "go_live_date": "2027-02-15"
+  },
+  "facts": {
+    "go_live_date": {"value": "2027-02-15", "source_status": "explicit", "section": "5. Timeline"},
+    "contract_precondition": {"value": true, "source_status": "explicit", "section": "2. Commercial Terms"}
+  },
+  "requirements": [
+    {"team": "commercial", "title": "Finalize launch offer set with Account Manager during onboarding", "section": "2. Commercial Terms"},
+    {"team": "commercial", "title": "Sign contract before integration work", "section": "2. Commercial Terms"},
+    {"team": "technical", "title": "API integration with QuickBite POS", "section": "3. Technical Scope"},
+    {"team": "technical", "title": "Near-real-time points accrual and in-store redemption", "section": "3. Technical Scope"},
+    {"team": "technical", "title": "End-to-end testing before launch", "section": "3. Technical Scope"},
+    {"team": "operations", "title": "Onboard merchant, configure locations and offers", "section": "4. Operations Scope"},
+    {"team": "operations", "title": "On-ground training for all participating locations", "section": "4. Operations Scope"}
+  ],
+  "expected_assumption_categories": [
+    "OFFER_COUNT",
+    "EARN_RATE",
+    "LOCATION_COUNT",
+    "TRAINING_DURATION",
+    "TEAM_SIZE",
+    "SLA_TARGETS",
+    "INTERMEDIATE_MILESTONES"
+  ],
+  "known_gaps": {
+    "offer_count": "SOW says 'a set of promotional offers to be finalized' - no number",
+    "earn_rate": "'standard LoyaltyCo scheme' - no explicit rate",
+    "location_count": "'participating locations' - never counted",
+    "training_duration": "training required but no duration",
+    "team_size": "no team or roles listed",
+    "sla_targets": "'industry-standard service levels' - no numbers",
+    "start_date": "only go-live given; no kickoff/contract dates"
+  },
+  "notes": "Assumption-engine target: each known gap should surface as an ASSUMED item with a reason, never as a fabricated EXPLICIT fact. Any concrete number presented as EXPLICIT for these gaps is a hallucination."
+}

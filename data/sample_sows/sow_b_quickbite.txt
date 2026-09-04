@@ -1,0 +1,44 @@
+Statement of Work — QuickBite Restaurants Loyalty Launch
+========================================================
+
+1. Overview
+-----------
+
+LoyaltyCo will implement its loyalty points platform for QuickBite Restaurants, a fast-casual restaurant chain. The engagement covers platform setup, POS integration, offer configuration, and staff enablement.
+
+2. Commercial Terms
+-------------------
+
+QuickBite will launch with a set of promotional offers to be finalized with the Account Manager during onboarding.
+
+Customers earn points on every purchase; the earn rate will follow the standard LoyaltyCo scheme unless otherwise agreed in the pricing annex.
+
+A signed contract is a precondition for integration work.
+
+3. Technical Scope
+------------------
+
+Integrate the LoyaltyCo platform with QuickBite's POS system via API.
+
+Points must accrue in near real time and be redeemable in-store.
+
+The integration must be tested end to end before launch.
+
+4. Operations Scope
+-------------------
+
+Operations will onboard the merchant, configure participating locations and offers, and train restaurant staff before launch.
+
+On-ground training is required for all participating locations.
+
+5. Timeline
+-----------
+
+Go-live is targeted for 15 February 2027.
+
+Intermediate milestone dates will be agreed during project kickoff.
+
+6. Service Levels
+-----------------
+
+Platform availability and support response times will follow industry-standard service levels as documented in the master service agreement.

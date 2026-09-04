@@ -1,0 +1,39 @@
+{
+  "doc": "sow_c_glowbeauty",
+  "profile": "messy_adversarial",
+  "project_info": {
+    "project_name": "GlowBeauty loyalty project",
+    "merchant_name": "GlowBeauty",
+    "start_date": null,
+    "go_live_date": "2027-01-15"
+  },
+  "facts": {
+    "earn_rate_points_per_usd": {"value": 5, "source_status": "explicit", "section": "2. What we agreed"},
+    "launch_offers": {"value": 12, "source_status": "explicit", "section": "2. What we agreed", "note": "12 confirmed for planning; 15 conditional on marketing budget"},
+    "store_count": {"value": 3, "source_status": "inferred", "note": "from POS table rows: Cairo Downtown, Alexandria Corniche, New Cairo"}
+  },
+  "requirements": [
+    {"team": "commercial", "title": "Obtain final offer list from GlowBeauty marketing", "section": "2.1 Offers"},
+    {"team": "technical", "title": "POS integration via API with RetailSoft POS", "section": "4. Technical stuff"},
+    {"team": "technical", "title": "Resolve New Cairo POS v9 gap (upgrade or workaround)", "section": "4. Technical stuff"},
+    {"team": "technical", "title": "Confirm auth mechanism with GlowBeauty IT", "section": "4. Technical stuff"},
+    {"team": "operations", "title": "Schedule staff training on Mondays only, outside December sale season", "section": "FWD: RE: RE: training dates"}
+  ],
+  "adversarial_features": {
+    "section_numbering_gap": "sections jump 1, 2, 2.1, 4 - no section 3",
+    "duplicate_paragraph": "2.1 Offers repeats its paragraph verbatim (dedup check, brief section 6)",
+    "date_contradiction": "'Q1 2027' in section 2 vs '15 January 2027' in section 5 - consistent but differently precise; system should prefer the precise date and note the vaguer one",
+    "embedded_email": "training constraints live inside a pasted email with a non-standard heading",
+    "conditional_number": "12 vs 15 offers - 15 must NOT be extracted as the committed count",
+    "tbd_values": "pricing annex TBD, auth 'probably API keys' - must become assumptions or open questions, not facts",
+    "risk_signal": "commercial team doubts the January date - should surface as a risk",
+    "boilerplate": "legal section contains no extractable requirements"
+  },
+  "expected_assumption_or_question_categories": [
+    "AUTH_MECHANISM",
+    "PRICING_TERMS",
+    "OFFER_LIST_CONTENT",
+    "POS_UPGRADE_PLAN"
+  ],
+  "notes": "Parsing-validation and grounding stress test. Scoring: duplicate chunk detected; 'probably API keys' never EXPLICIT; training constraint from the email is captured; New Cairo POS risk surfaced."
+}

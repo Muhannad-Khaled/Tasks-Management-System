@@ -1,0 +1,110 @@
+Statement of Work — Loyalty Program Implementation for CairoMart Retail Group
+=============================================================================
+
+1. Introduction and Background
+------------------------------
+
+This Statement of Work (SOW) is entered into between LoyaltyCo (the Provider) and CairoMart Retail Group (the Merchant) for the implementation of a points-based customer loyalty program across the Merchant's retail network.
+
+CairoMart operates 5 retail branches in Greater Cairo and seeks to launch a unified loyalty program to increase repeat purchases and customer retention.
+
+2. Objectives
+-------------
+
+Launch a fully operational loyalty points program across all 5 CairoMart branches.
+
+Enable customers to earn 10 points for every 1 USD spent in-store.
+
+Provide the Merchant with 20 configurable promotional offers at launch.
+
+Achieve go-live no later than 1 December 2026.
+
+3. Scope of Work
+----------------
+
+The Provider will deliver: merchant onboarding, loyalty platform configuration, API integration with the Merchant's point-of-sale (POS) system, offer setup, staff training, and go-live support.
+
+Out of scope: hardware procurement, POS replacement, and marketing campaign design.
+
+4. Commercial Requirements
+--------------------------
+
+The Merchant will launch 20 loyalty offers at go-live, distributed across product categories as agreed with the Account Manager.
+
+Pricing follows the standard LoyaltyCo revenue-share model: 2.5% of the value of each redeemed offer.
+
+The commercial contract must be countersigned before any technical integration work begins.
+
+Item                                Quantity  Notes                      
+----------------------------------  --------  ---------------------------
+Participating branches              5         All Greater Cairo locations
+Launch offers                       20        Configured before go-live  
+Merchant onboarding questionnaires  15        Commercial team to collect 
+Offer configuration questionnaires  10        One per offer family       
+
+5. Technical Requirements
+-------------------------
+
+The Provider will implement a REST API integration between the LoyaltyCo platform and the Merchant's POS system for real-time points accrual.
+
+Points calculation rule: customers earn 10 points for every 1 USD spent. Points expire 12 months after accrual.
+
+Authentication between systems uses OAuth 2.0 client-credentials flow.
+
+The API must sustain 50 transactions per second at peak with p95 latency under 300 ms.
+
+All API integration work, including end-to-end testing, must be completed before the go-live date.
+
+6. Operations Requirements
+--------------------------
+
+Operations will configure the merchant account, the 5 branches, and all 20 offers in the production environment after technical validation passes.
+
+Merchant onboarding includes collection of branch data, staff rosters, and offer approval sign-off from the Merchant's commercial representative.
+
+7. Training
+-----------
+
+On-ground training is required for cashier and floor staff at each of the 5 branches. Training duration is 2 days in total, delivered by the Operations team in the week before go-live.
+
+8. Milestones and Timeline
+--------------------------
+
+The project runs from contract signature to go-live per the schedule below.
+
+Milestone                        Date        Owner     
+-------------------------------  ----------  ----------
+Contract countersigned           2026-10-01  Commercial
+Technical integration complete   2026-11-10  Technical 
+End-to-end testing complete      2026-11-20  Technical 
+Merchant configuration complete  2026-11-24  Operations
+Staff training complete          2026-11-27  Operations
+Go-live                          2026-12-01  All teams 
+
+9. Team and Responsibilities
+----------------------------
+
+The Provider assigns a cross-functional team of 8 people to this project.
+
+Role                         Team        Responsibility                       
+---------------------------  ----------  -------------------------------------
+Account Manager              Commercial  Merchant relationship, offer sign-off
+Commercial Manager           Commercial  Contract and pricing                 
+Technical Lead               Technical   Integration architecture             
+Backend Engineer             Technical   API development                      
+QA Engineer                  Technical   Testing and validation               
+Operations Manager           Operations  Configuration and go-live            
+Merchant Success Specialist  Operations  Onboarding and training              
+Support Agent                Operations  Post-go-live support                 
+
+10. Service Level Agreements
+----------------------------
+
+Platform availability: 99.5% monthly uptime.
+
+Support response time: 4 business hours for priority incidents during the first 30 days after go-live.
+
+11. Acceptance Criteria
+-----------------------
+
+The project is accepted when: all 20 offers are live in production, points accrue correctly at 10 points per 1 USD in all 5 branches, end-to-end tests pass, staff training is complete, and the Merchant signs the go-live checklist.

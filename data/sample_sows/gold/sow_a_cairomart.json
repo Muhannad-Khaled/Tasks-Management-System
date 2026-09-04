@@ -1,0 +1,55 @@
+{
+  "doc": "sow_a_cairomart",
+  "profile": "clean_complete",
+  "project_info": {
+    "project_name": "Loyalty Program Implementation for CairoMart Retail Group",
+    "merchant_name": "CairoMart Retail Group",
+    "start_date": "2026-10-01",
+    "go_live_date": "2026-12-01"
+  },
+  "facts": {
+    "branches": {"value": 5, "source_status": "explicit", "section": "2. Objectives"},
+    "launch_offers": {"value": 20, "source_status": "explicit", "section": "4. Commercial Requirements"},
+    "earn_rate_points_per_usd": {"value": 10, "source_status": "explicit", "section": "5. Technical Requirements"},
+    "points_expiry_months": {"value": 12, "source_status": "explicit", "section": "5. Technical Requirements"},
+    "merchant_onboarding_questionnaires": {"value": 15, "source_status": "explicit", "section": "4. Commercial Requirements"},
+    "offer_configuration_questionnaires": {"value": 10, "source_status": "explicit", "section": "4. Commercial Requirements"},
+    "revenue_share_percent": {"value": 2.5, "source_status": "explicit", "section": "4. Commercial Requirements"},
+    "training_days": {"value": 2, "source_status": "explicit", "section": "7. Training"},
+    "team_size": {"value": 8, "source_status": "explicit", "section": "9. Team and Responsibilities"},
+    "uptime_sla_percent": {"value": 99.5, "source_status": "explicit", "section": "10. Service Level Agreements"},
+    "support_response_hours": {"value": 4, "source_status": "explicit", "section": "10. Service Level Agreements"},
+    "api_peak_tps": {"value": 50, "source_status": "explicit", "section": "5. Technical Requirements"},
+    "api_p95_latency_ms": {"value": 300, "source_status": "explicit", "section": "5. Technical Requirements"}
+  },
+  "requirements": [
+    {"team": "commercial", "title": "Countersign commercial contract before integration begins", "section": "4. Commercial Requirements"},
+    {"team": "commercial", "title": "Finalize 20 launch offers with Account Manager", "section": "4. Commercial Requirements"},
+    {"team": "commercial", "title": "Collect 15 merchant onboarding questionnaires", "section": "4. Commercial Requirements"},
+    {"team": "technical", "title": "REST API integration with POS for real-time points accrual", "section": "5. Technical Requirements"},
+    {"team": "technical", "title": "Implement points calculation: 10 points per 1 USD, 12-month expiry", "section": "5. Technical Requirements"},
+    {"team": "technical", "title": "OAuth 2.0 client-credentials auth between systems", "section": "5. Technical Requirements"},
+    {"team": "technical", "title": "Meet performance target: 50 TPS peak, p95 < 300 ms", "section": "5. Technical Requirements"},
+    {"team": "technical", "title": "Complete end-to-end testing before go-live", "section": "5. Technical Requirements"},
+    {"team": "operations", "title": "Configure merchant account, 5 branches, 20 offers in production", "section": "6. Operations Requirements"},
+    {"team": "operations", "title": "Merchant onboarding: branch data, staff rosters, offer sign-off", "section": "6. Operations Requirements"},
+    {"team": "operations", "title": "Deliver 2 days on-ground training across 5 branches before go-live", "section": "7. Training"}
+  ],
+  "milestones": [
+    {"name": "Contract countersigned", "date": "2026-10-01", "owner": "commercial"},
+    {"name": "Technical integration complete", "date": "2026-11-10", "owner": "technical"},
+    {"name": "End-to-end testing complete", "date": "2026-11-20", "owner": "technical"},
+    {"name": "Merchant configuration complete", "date": "2026-11-24", "owner": "operations"},
+    {"name": "Staff training complete", "date": "2026-11-27", "owner": "operations"},
+    {"name": "Go-live", "date": "2026-12-01", "owner": "all"}
+  ],
+  "expected_dependencies": [
+    ["Contract countersigned", "Technical integration"],
+    ["Technical integration", "End-to-end testing"],
+    ["End-to-end testing", "Merchant configuration"],
+    ["Merchant configuration", "Staff training"],
+    ["Staff training", "Go-live"]
+  ],
+  "expected_assumptions": [],
+  "notes": "Happy path: everything the pipeline needs is explicit. Any ASSUMED item generated for this SOW counts against assumption precision."
+}
