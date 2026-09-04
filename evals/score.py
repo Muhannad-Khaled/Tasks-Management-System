@@ -160,8 +160,7 @@ def extract_all(db) -> dict[str, Project]:
         print(f"  extracting {slug} …", flush=True)
         try:
             run_sow_pipeline(db, project.id, str(CORPUS / f"{slug}.pdf"), doc_key)
-        except Exception as exc:
-            # Drop the empty shell rather than leaving it in the project list.
+        except Exception as exc:  # noqa: BLE001 - one bad document must not end the run
             db.rollback()
             db.delete(project)
             db.commit()
