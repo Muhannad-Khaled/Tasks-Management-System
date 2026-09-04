@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+from app.schemas.enums import SourceStatus
+from app.schemas.fields import PLANNING_FIELDS
+from app.schemas.gaps import FieldFinding, GapReport
 from app.schemas.sow import (
     ExtractedAssumption,
     ExtractedRequirement,
@@ -26,6 +29,35 @@ class StubLLM:
 
     def generate_structured(self, prompt, schema, **kwargs):
         self.calls.append({"prompt": prompt.name, **kwargs})
+        if schema is GapReport:
+            return self._gap_report()
+        return self._extraction()
+
+    def _gap_report(self) -> GapReport:
+        """Report the first field as stated and the rest as gaps."""
+        findings = []
+        for index, spec in enumerate(PLANNING_FIELDS):
+            if index == 0 and self.citations:
+                findings.append(
+                    FieldFinding(
+                        field_key=spec.key,
+                        status=SourceStatus.EXPLICIT,
+                        value="5",
+                        evidence_chunk_keys=self.citations,
+                    )
+                )
+            else:
+                findings.append(
+                    FieldFinding(
+                        field_key=spec.key,
+                        status=SourceStatus.ASSUMED,
+                        value="",
+                        note=f"The SOW does not specify the {spec.label}.",
+                    )
+                )
+        return GapReport(findings=findings)
+
+    def _extraction(self) -> StructuredSOW:
         return StructuredSOW(
             project_info=ProjectInfo(
                 project_name="Loyalty Program - CairoMart",

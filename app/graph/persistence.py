@@ -81,18 +81,6 @@ def persist_extraction(
     Citations the model invented (keys that are not in the document) are dropped
     rather than stored, so a task can never point at evidence that does not exist.
     """
-    for assumption in extraction.assumptions:
-        db.add(
-            Assumption(
-                project_id=project.id,
-                assumption_key=assumption.assumption_id,
-                category=assumption.category,
-                value=assumption.value,
-                reason=assumption.reason,
-                confidence=assumption.confidence,
-            )
-        )
-
     tasks_by_extracted_id: dict[str, ProjectTask] = {}
     for extracted in extraction.tasks:
         cited = [normalize_citation(k) for k in extracted.source_chunk_keys]
@@ -125,6 +113,30 @@ def persist_extraction(
 
     db.commit()
     return list(tasks_by_extracted_id.values())
+
+
+def persist_assumptions(db: Session, project: Project, assumptions: list[dict]) -> list[Assumption]:
+    """Write the assumption engine's findings.
+
+    These come from the explicit field audit rather than from whatever the
+    extraction pass chose to mention, so they replace any already recorded for
+    the project instead of accumulating alongside them.
+    """
+    db.query(Assumption).filter(Assumption.project_id == project.id).delete()
+    rows = [
+        Assumption(
+            project_id=project.id,
+            assumption_key=a["assumption_key"],
+            category=a["category"],
+            value=a["value"],
+            reason=a["reason"],
+            confidence=a["confidence"],
+        )
+        for a in assumptions
+    ]
+    db.add_all(rows)
+    db.flush()
+    return rows
 
 
 def invented_citations(extraction: StructuredSOW, chunks_by_key: dict[str, SOWChunk]) -> list[str]:

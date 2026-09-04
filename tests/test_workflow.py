@@ -11,6 +11,7 @@ from app.graph.workflow import build_graph, run_sow_pipeline
 from app.ingestion.parser import parse_document
 from app.models import Assumption, Project, ProjectTask, SOWChunk
 from app.schemas.enums import ProjectStatus
+from app.schemas.fields import PLANNING_FIELDS
 from tests.factories import CORPUS, StubLLM
 
 
@@ -99,7 +100,9 @@ def test_parsing_failure_stops_before_extraction(db, tmp_path: Path):
     assert db.query(ProjectTask).filter(ProjectTask.project_id == project.id).count() == 0
 
 
-def test_assumptions_are_recorded_separately_from_tasks(db):
+def test_every_unstated_field_becomes_a_recorded_assumption(db):
+    # The engine audits a fixed field checklist, so a gap cannot go unmentioned
+    # just because the extraction pass did not think to raise it.
     project = _new_project(db)
     run_sow_pipeline(
         db,
@@ -109,10 +112,12 @@ def test_assumptions_are_recorded_separately_from_tasks(db):
         client=StubLLM(citations=_real_chunk_keys("sow_b_quickbite", "SOW-002")),
     )
     assumptions = db.query(Assumption).filter(Assumption.project_id == project.id).all()
-    assert len(assumptions) == 1
-    assert assumptions[0].category == "TEAM_SIZE"
-    assert assumptions[0].reason
-    assert assumptions[0].status == "assumed"
+    # The stub reports only the first field as stated; the rest are gaps.
+    assert len(assumptions) == len(PLANNING_FIELDS) - 1
+    assert all(a.reason for a in assumptions), "an assumption without a reason is not reviewable"
+    assert all(a.value for a in assumptions), "an assumption needs a default to be schedulable"
+    assert all(a.status == "assumed" for a in assumptions)
+    assert {a.category for a in assumptions} >= {"OFFER_COUNT", "EARN_RATE", "TRAINING_DURATION"}
 
 
 def test_project_moves_to_awaiting_approval_not_straight_to_sync(db):

@@ -13,8 +13,21 @@ task manager without a human approving it.
 | Milestone | State |
 |---|---|
 | M0 — foundation, DB schema, synthetic SOW corpus | done |
-| M1 — SOW → extraction → tasks → Trello → UI | pipeline done; needs `GEMINI_API_KEY` for real extraction |
-| M2–M7 — teams, planning, grounding, HITL, RAG, evaluation | not started |
+| M1 — SOW → extraction → tasks → Trello → UI | done, verified end to end against a real Trello board |
+| M2 — assumption engine | done |
+| M3–M7 — planning, grounding, HITL, RAG, evaluation | not started |
+
+Extraction quality against the gold standards (`gemini-3.7-flash`):
+
+| Document | Tasks | Coverage | Citations | Evidence | Assumption recall | Hallucinated |
+|---|---|---|---|---|---|---|
+| A (clean) | 9 | 100% | 100% | 100% | n/a — no gaps | none |
+| B (gappy) | 7 | 100% | 100% | 100% | 100% | none |
+| C (adversarial) | 8 | 100% | 100% | 100% | 50% | none |
+
+C's two unflagged gaps are document-specific open questions (an offer list to be
+supplied later, a POS upgrade plan) rather than the standard planning fields the
+checklist covers. Catching those needs an open-questions pass, which is not built.
 
 ## Setup
 
@@ -61,7 +74,8 @@ extraction is stubbed in `tests/factories.py`.
 |---|---|
 | `app/ingestion/` | PDF/DOCX/TXT parsing into sections and chunks with citable keys; parsing-validation gate |
 | `app/llm/` | Gemini client with structured output, response caching, audit logging; versioned prompts |
-| `app/graph/` | LangGraph workflow and persistence |
+| `app/graph/` | LangGraph workflow, assumption engine, persistence |
+| `evals/` | Scores a real extraction against the gold standards |
 | `app/taskmanager/` | Platform-neutral task interface plus the Trello adapter |
 | `app/api/` | FastAPI routes |
 | `ui/` | Streamlit UI |
@@ -82,3 +96,12 @@ over a broken parse.
 
 **Provenance is a first-class field.** Everything generated is `explicit`,
 `inferred`, or `assumed`, and assumptions carry a reason and confidence.
+
+**Gaps are found by checklist, not volunteered.** Asking the model to mention
+what a SOW left out measured 0 of 7 gaps on a deliberately vague document — it
+did not invent the missing numbers, it simply said nothing about them. So the
+planning-critical fields are enumerated in `app/schemas/fields.py` and audited
+one by one. A field the model claims is stated but cannot cite is demoted to an
+assumption, and so is a value like "standard scheme" or "TBD" that gestures at
+an answer without giving one. On the clean SOW this produces zero assumptions;
+on the vague one, thirteen.

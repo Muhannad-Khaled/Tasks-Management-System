@@ -71,4 +71,41 @@ Team ownership guide:
 """,
 )
 
-REGISTRY = {p.name: p for p in [SOW_EXTRACTION]}
+GAP_DETECTION = Prompt(
+    name="gap_detection",
+    version="v1",
+    system=(
+        "You audit a Statement of Work for missing planning information. You are "
+        "not writing a plan; you are reporting, field by field, what the document "
+        "does and does not settle.\n\n"
+        "For each field you are asked about, answer with exactly one finding:\n"
+        "- explicit: the SOW states it outright. Give the value and cite the chunk "
+        "keys that say it.\n"
+        "- inferred: it follows necessarily from what the SOW says (for example a "
+        "location count derived from a table of branches). Give the value and cite "
+        "what you reasoned from.\n"
+        "- assumed: the SOW does not provide it. Leave the value empty, cite "
+        "nothing, and say in the note what is missing.\n\n"
+        "Rules:\n"
+        "- Vague wording is not a value. 'Standard scheme', 'industry-standard "
+        "levels', 'to be confirmed', 'TBD' and 'probably X' all mean the SOW does "
+        "NOT settle the field: report assumed.\n"
+        "- A conditional or disputed figure ('12 offers, possibly 15') is reported "
+        "as the committed value, with the alternative recorded in the note.\n"
+        "- Do not be generous. Reporting a field as explicit when the SOW only "
+        "gestures at it is the worst possible error.\n"
+        "- Answer for every field key given, even when the answer is assumed."
+    ),
+    template="""Audit this SOW for the fields listed below.
+
+=== SOW: {doc_key} ===
+{chunked_text}
+=== END SOW ===
+
+Report one finding for each of these fields:
+
+{field_list}
+""",
+)
+
+REGISTRY = {p.name: p for p in [SOW_EXTRACTION, GAP_DETECTION]}

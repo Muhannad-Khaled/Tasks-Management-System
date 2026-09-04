@@ -9,6 +9,7 @@ from app.ingestion.parser import parse_document
 from app.main import app
 from app.models import Project
 from app.schemas.enums import ProjectStatus
+from app.schemas.fields import PLANNING_FIELDS
 from tests.factories import CORPUS, StubLLM
 
 
@@ -92,4 +93,4 @@ def test_project_list_reports_task_and_assumption_counts(client, seeded_project)
     projects = client.get("/projects").json()
     row = next(p for p in projects if p["id"] == seeded_project.id)
     assert row["task_count"] == 3
-    assert row["assumption_count"] == 1
+    assert row["assumption_count"] == len(PLANNING_FIELDS) - 1
