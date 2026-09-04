@@ -158,7 +158,15 @@ def extract_all(db) -> dict[str, Project]:
         db.add(project)
         db.commit()
         print(f"  extracting {slug} …", flush=True)
-        run_sow_pipeline(db, project.id, str(CORPUS / f"{slug}.pdf"), doc_key)
+        try:
+            run_sow_pipeline(db, project.id, str(CORPUS / f"{slug}.pdf"), doc_key)
+        except Exception as exc:
+            # Drop the empty shell rather than leaving it in the project list.
+            db.rollback()
+            db.delete(project)
+            db.commit()
+            print(f"  {slug} failed: {exc}")
+            continue
         projects[slug] = project
     return projects
 
