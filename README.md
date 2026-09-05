@@ -15,7 +15,8 @@ task manager without a human approving it.
 | M0 — foundation, DB schema, synthetic SOW corpus | done |
 | M1 — SOW → extraction → tasks → Trello → UI | done, verified end to end against a real Trello board |
 | M2 — assumption engine | done |
-| M3–M7 — planning, grounding, HITL, RAG, evaluation | not started |
+| M3 — dependency validation, critical path, timeline | done |
+| M4–M7 — grounding, HITL, RAG, evaluation | not started |
 
 Extraction quality against the gold standards (`gemini-3.7-flash`):
 
@@ -75,6 +76,7 @@ extraction is stubbed in `tests/factories.py`.
 | `app/ingestion/` | PDF/DOCX/TXT parsing into sections and chunks with citable keys; parsing-validation gate |
 | `app/llm/` | Gemini client with structured output, response caching, audit logging; versioned prompts |
 | `app/graph/` | LangGraph workflow, assumption engine, persistence |
+| `app/planning/` | Dependency validation, CPM critical path, scheduling |
 | `evals/` | Scores a real extraction against the gold standards |
 | `app/taskmanager/` | Platform-neutral task interface plus the Trello adapter |
 | `app/api/` | FastAPI routes |
@@ -105,3 +107,10 @@ one by one. A field the model claims is stated but cannot cite is demoted to an
 assumption, and so is a value like "standard scheme" or "TBD" that gestures at
 an answer without giving one. On the clean SOW this produces zero assumptions;
 on the vague one, thirteen.
+
+**Scheduling is deterministic.** The model proposes dependencies; code decides
+which survive. Self-references, edges to tasks that do not exist, and cycles are
+removed and reported rather than allowed to reach the scheduler, and the critical
+path comes from a plain CPM pass — no model involved. It is computed across the
+whole project, because the delays that matter run between teams: technical
+validation holding up operations configuration, not one team's internal order.
