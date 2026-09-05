@@ -1,15 +1,16 @@
 """LangGraph SOW processing workflow.
 
                           /-> extract   -\\
-    parse -> validate_parsing            -> persist
+    parse -> validate_parsing            -> persist -> schedule -> grounding
                           \\-> gap_audit -/
 
 The parsing gate is a real branch, not a formality: if parsing failed the graph
 stops instead of letting the model reason over garbage (brief section 6).
 
 Extraction and the gap audit are independent reads of the same document, so
-they run concurrently. Grounding, dependency/timeline nodes and the HITL
-interrupt attach to this same graph in later milestones.
+they run concurrently. Scheduling then grounding run in order because the
+timeline validation stage needs the dates scheduling produces. The HITL
+interrupt attaches after grounding in a later milestone.
 """
 
 from __future__ import annotations
@@ -31,17 +32,21 @@ from app.graph.persistence import (
     persist_assumptions,
     persist_document,
     persist_extraction,
+    persist_grounding,
 )
+from app.grounding.engine import ground_project, project_grounding_score
 from app.ingestion.parser import parse_document
 from app.ingestion.validation import ParsingStatus, validate_parsed_document
 from app.llm.client import GeminiClient, build_chunked_text
 from app.llm.prompts import GAP_DETECTION, SOW_EXTRACTION
-from app.models import Project
+from app.models import Project, ProjectTask
 from app.planning.service import resolve_deadline, schedule_project
+from app.rag.index import index_document, search
 from app.schemas.enums import ProjectStatus
 from app.schemas.fields import PLANNING_FIELDS
 from app.schemas.gaps import GapReport
 from app.schemas.sow import StructuredSOW
+from app.validation.pipeline import run_validation
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,9 @@ class SOWState(TypedDict, total=False):
     assumptions: list[dict]
     schedule: Any
     critical_path: list[str]
+    groundings: list[Any]
+    grounding_score: float
+    validation: Any
     task_count: int
     assumption_count: int
     warnings: Annotated[list[str], lambda a, b: a + b]
@@ -205,7 +213,42 @@ def make_schedule_node(db: Session):
     return _node_schedule
 
 
-def build_graph(client: GeminiClient, db: Session):
+def make_grounding_node(client: GeminiClient, db: Session, use_retrieval: bool = True):
+    """Judge each task's claims against the SOW, then run the validation stages."""
+
+    def _node_grounding(state: SOWState) -> SOWState:
+        project_id = state["project_id"]
+        doc = state["parsed_doc"]
+        valid_keys = {doc.chunk_key(s, c) for s, c in doc.iter_chunks()}
+
+        retriever = None
+        if use_retrieval:
+            # Index the chunks so claims that cite nothing can still find evidence.
+            try:
+                index_document(project_id, doc)
+                retriever = search
+            except Exception as exc:  # noqa: BLE001 - retrieval is an aid, not a gate
+                logger.warning("Chroma indexing failed, grounding on citations only: %s", exc)
+
+        tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project_id).all()
+        groundings = ground_project(client, db, project_id, tasks, valid_keys, retriever)
+        persist_grounding(db, db.get(Project, project_id), groundings)
+
+        report = run_validation(
+            db, project_id, tasks, groundings, resolve_deadline(db, project_id)
+        )
+        warnings = [f"validation {s.stage}: {s.detail}" for s in report.failures]
+        return {
+            "groundings": groundings,
+            "grounding_score": project_grounding_score(groundings),
+            "validation": report,
+            "warnings": warnings,
+        }
+
+    return _node_grounding
+
+
+def build_graph(client: GeminiClient, db: Session, use_retrieval: bool = True):
     graph = StateGraph(SOWState)
     graph.add_node("parse", _node_parse)
     graph.add_node("validate_parsing", _node_validate_parsing)
@@ -213,6 +256,7 @@ def build_graph(client: GeminiClient, db: Session):
     graph.add_node("extract", make_extract_node(client, db))
     graph.add_node("gap_audit", make_gap_audit_node(client, db))
     graph.add_node("schedule", make_schedule_node(db))
+    graph.add_node("grounding", make_grounding_node(client, db, use_retrieval))
     graph.add_node("persist", make_persist_node(db))
 
     graph.set_entry_point("parse")
@@ -227,17 +271,24 @@ def build_graph(client: GeminiClient, db: Session):
     graph.add_edge("parsing_failed", END)
     graph.add_edge("extract", "persist")
     graph.add_edge("gap_audit", "persist")
-    # Scheduling needs the tasks and their dependency edges to exist first.
+    # Scheduling needs the tasks and their dependency edges to exist first, and
+    # the timeline validation stage needs the dates scheduling produces.
     graph.add_edge("persist", "schedule")
-    graph.add_edge("schedule", END)
+    graph.add_edge("schedule", "grounding")
+    graph.add_edge("grounding", END)
     return graph.compile()
 
 
 def run_sow_pipeline(
-    db: Session, project_id: str, file_path: str, doc_key: str, client: GeminiClient | None = None
+    db: Session,
+    project_id: str,
+    file_path: str,
+    doc_key: str,
+    client: GeminiClient | None = None,
+    use_retrieval: bool = True,
 ) -> SOWState:
     client = client or GeminiClient()
-    graph = build_graph(client, db)
+    graph = build_graph(client, db, use_retrieval)
     return graph.invoke(
         {"project_id": project_id, "file_path": file_path, "doc_key": doc_key, "warnings": []}
     )

@@ -3,7 +3,18 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -131,6 +142,41 @@ class Assumption(Base):
     created_by: Mapped[str] = mapped_column(String(64), default="system")
 
     project: Mapped[Project] = relationship(back_populates="assumptions")
+
+
+class ClaimRecord(Base):
+    """One atomic assertion made by a generated task, with its verdict.
+
+    Stored per claim rather than per task so the UI can show exactly which
+    detail failed, and so hallucination rate is measurable over time.
+    """
+
+    __tablename__ = "claims"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("project_tasks.id"), nullable=True)
+    claim_key: Mapped[str] = mapped_column(String(32))  # C-001
+    text: Mapped[str] = mapped_column(Text)
+    is_quantitative: Mapped[bool] = mapped_column(Boolean, default=False)
+    verdict: Mapped[str] = mapped_column(String(24), default="unsupported")
+    reasoning: Mapped[str] = mapped_column(Text, default="")
+    supporting_chunk_keys: Mapped[str] = mapped_column(Text, default="")
+
+
+class ValidationLog(Base):
+    """Outcome of one validation stage for one project (brief section 22)."""
+
+    __tablename__ = "validation_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    stage: Mapped[str] = mapped_column(String(48))
+    passed: Mapped[bool] = mapped_column(Boolean, default=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    grounding_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    validator_version: Mapped[str] = mapped_column(String(16), default="v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class LLMRequest(Base):

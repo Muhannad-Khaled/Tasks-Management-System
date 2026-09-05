@@ -11,7 +11,15 @@ import re
 from sqlalchemy.orm import Session
 
 from app.ingestion.parser import ParsedDocument
-from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument, SOWSection
+from app.models import (
+    Assumption,
+    ClaimRecord,
+    Project,
+    ProjectTask,
+    SOWChunk,
+    SOWDocument,
+    SOWSection,
+)
 from app.schemas.sow import StructuredSOW
 
 _CHUNK_KEY = re.compile(r"[A-Za-z0-9_.-]*SOW[A-Za-z0-9_.-]*-S\d+-C\d+", re.IGNORECASE)
@@ -137,6 +145,34 @@ def persist_assumptions(db: Session, project: Project, assumptions: list[dict]) 
     db.add_all(rows)
     db.flush()
     return rows
+
+
+def persist_grounding(db: Session, project: Project, groundings: list) -> None:
+    """Write per-claim verdicts and roll the score up onto each task."""
+    db.query(ClaimRecord).filter(ClaimRecord.project_id == project.id).delete()
+    for grounding in groundings:
+        by_id = {j.claim_id: j for j in grounding.judgements}
+        for claim in grounding.claims:
+            judgement = by_id.get(claim.claim_id)
+            db.add(
+                ClaimRecord(
+                    project_id=project.id,
+                    task_id=grounding.task_id,
+                    claim_key=claim.claim_id,
+                    text=claim.text,
+                    is_quantitative=claim.is_quantitative,
+                    verdict=str(judgement.verdict) if judgement else "unsupported",
+                    reasoning=judgement.reasoning if judgement else "",
+                    supporting_chunk_keys=(
+                        ",".join(judgement.supporting_chunk_keys) if judgement else ""
+                    ),
+                )
+            )
+        task = db.get(ProjectTask, grounding.task_id)
+        if task is not None:
+            task.grounding_score = grounding.score
+            task.validation_status = grounding.status
+    db.commit()
 
 
 def invented_citations(extraction: StructuredSOW, chunks_by_key: dict[str, SOWChunk]) -> list[str]:

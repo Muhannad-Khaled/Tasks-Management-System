@@ -52,6 +52,18 @@ def _schema():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_embedding(monkeypatch):
+    """Keep ChromaDB out of the suite.
+
+    Embedding every chunk on every pipeline test took the suite from 20s to
+    over four minutes, and retrieval is an aid to grounding rather than a
+    behaviour these tests assert. `tests/test_rag.py` exercises it directly.
+    """
+    monkeypatch.setattr("app.graph.workflow.index_document", lambda *a, **k: 0)
+    monkeypatch.setattr("app.graph.workflow.search", None)
+
+
 @pytest.fixture
 def db():
     session = SessionLocal()
@@ -59,6 +71,8 @@ def db():
     session.rollback()
     # Order respects foreign keys.
     for table in [
+        "claims",
+        "validation_logs",
         "task_dependencies",
         "project_tasks",
         "assumptions",

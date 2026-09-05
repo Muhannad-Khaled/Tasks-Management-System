@@ -40,6 +40,10 @@ class TransientLLMError(LLMError):
     """Retryable: rate limits and the API's own temporary failures."""
 
 
+class QuotaExhausted(LLMError):
+    """The daily quota is gone. Retrying will not help until it resets."""
+
+
 # Quota exhaustion and "model overloaded" both resolve by waiting, so both are
 # retried. A 503 during extraction is common on popular models and must not
 # surface to the user as a failed upload.
@@ -56,6 +60,10 @@ _TRANSIENT_MARKERS = (
     "high demand",
     "internal error",
 )
+
+# A per-day quota does not come back within a retry window. Backing off five
+# times against it wastes minutes and hides the real problem from the caller.
+_DAILY_QUOTA_MARKERS = ("perday", "per day", "requestsperday", "freetier")
 
 
 def _hash_input(prompt_text: str, model: str, schema_name: str) -> str:
@@ -123,6 +131,14 @@ class GeminiClient:
             )
         except Exception as exc:  # google-genai raises transport-specific errors
             message = str(exc)
+            lowered = message.lower().replace("_", "")
+            if any(marker in lowered for marker in _DAILY_QUOTA_MARKERS) and "429" in lowered:
+                raise QuotaExhausted(
+                    "The Gemini free-tier daily request quota for "
+                    f"{self.model} is exhausted. It resets on Google's daily "
+                    "schedule; until then, run the pipeline with a stubbed "
+                    "client or a model with remaining quota."
+                ) from exc
             if any(marker in message.lower() for marker in _TRANSIENT_MARKERS):
                 logger.warning("Transient Gemini error, will retry: %s", message[:200])
                 raise TransientLLMError(message) from exc

@@ -108,4 +108,65 @@ Report one finding for each of these fields:
 """,
 )
 
-REGISTRY = {p.name: p for p in [SOW_EXTRACTION, GAP_DETECTION]}
+CLAIM_EXTRACTION = Prompt(
+    name="claim_extraction",
+    version="v1",
+    system=(
+        "You split a generated project item into the atomic factual claims it "
+        "makes, so each can be checked against the SOW separately.\n\n"
+        "A claim is one checkable assertion. Split anything compound: "
+        "'Deliver 2 days of training across 5 branches by 27 November' is three "
+        "claims — the duration, the branch count, and the date.\n\n"
+        "Only extract assertions about the project that could be true or false "
+        "against the SOW. Do not extract restatements of the task's own purpose "
+        "('this task implements the integration'), and do not invent claims the "
+        "item does not make.\n\n"
+        "Mark a claim as quantitative when it asserts a number, date, duration, "
+        "or rate — those are where unsupported detail does the most damage."
+    ),
+    template="""Split each generated task below into atomic claims.
+
+Return one entry per task, using the task reference exactly as given.
+Claim ids must be unique across the whole response.
+
+{tasks}
+""",
+)
+
+CLAIM_VERIFICATION = Prompt(
+    name="claim_verification",
+    version="v1",
+    system=(
+        "You judge whether SOW evidence establishes each claim. You are the "
+        "check on a generation step, so err towards scepticism.\n\n"
+        "Verdicts:\n"
+        "- supported: the evidence states the claim, or it follows directly and "
+        "necessarily from what the evidence states.\n"
+        "- partial: the evidence is about the same subject but does not "
+        "establish the claim. A claim of '2 days of training' against evidence "
+        "that only says training is required is partial, not supported.\n"
+        "- unsupported: nothing in the evidence establishes the claim.\n"
+        "- contradicted: the evidence says something incompatible with it.\n\n"
+        "Rules:\n"
+        "- Judge only against the evidence given. Plausibility, industry norms "
+        "and your own knowledge are not evidence.\n"
+        "- A number is supported only if the evidence gives that number or one "
+        "it arithmetically determines. A different number is contradicted.\n"
+        "- Cite the chunk keys that do the supporting, and only those.\n"
+        "- Answer for every claim given."
+    ),
+    template="""Judge each claim against the SOW evidence below.
+
+=== EVIDENCE ===
+{evidence}
+=== END EVIDENCE ===
+
+Claims:
+{claims}
+""",
+)
+
+REGISTRY = {
+    p.name: p
+    for p in [SOW_EXTRACTION, GAP_DETECTION, CLAIM_EXTRACTION, CLAIM_VERIFICATION]
+}
