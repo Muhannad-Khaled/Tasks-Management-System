@@ -24,6 +24,7 @@ class BoardTask:
     due_date: date | None = None
     assignee: str = ""
     source_status: str = "explicit"
+    validation_status: str = "pending"
     source_section: str = ""
     source_chunk_keys: list[str] = field(default_factory=list)
     grounding_score: float | None = None
@@ -36,6 +37,10 @@ class BoardTask:
                 self.source_status, "REVIEW-REQUIRED"
             )
         )
+        # A task that only scraped through grounding should say so on the board,
+        # not look identical to one the SOW fully supports.
+        if self.validation_status == "review":
+            labels.append("REVIEW-REQUIRED")
         return labels
 
     def rendered_description(self) -> str:

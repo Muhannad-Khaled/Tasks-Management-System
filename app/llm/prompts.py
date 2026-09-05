@@ -166,7 +166,48 @@ Claims:
 """,
 )
 
+TASK_REGENERATION = Prompt(
+    name="task_regeneration",
+    version="v1",
+    system=(
+        _GROUNDING_RULES
+        + "\n\nYou are regenerating a single task that a project manager "
+        "rejected, or that failed grounding. Fix the specific problem you are "
+        "told about.\n\n"
+        "- If claims were unsupported, either drop them or restate the task so "
+        "it only asserts what the SOW establishes. Do not defend the original "
+        "wording.\n"
+        "- If the PM gave a reason, treat it as binding.\n"
+        "- Keep the task's team and its place in the plan unless the reason "
+        "says otherwise.\n"
+        "- Cite only chunk keys present in the evidence below."
+    ),
+    template="""Regenerate this task.
+
+Original title: {title}
+Original description: {description}
+Team: {team}
+
+Why it is being regenerated:
+{reason}
+
+{failed_claims}
+
+=== SOW EVIDENCE ===
+{evidence}
+=== END EVIDENCE ===
+
+Return a single replacement task.
+""",
+)
+
 REGISTRY = {
     p.name: p
-    for p in [SOW_EXTRACTION, GAP_DETECTION, CLAIM_EXTRACTION, CLAIM_VERIFICATION]
+    for p in [
+        SOW_EXTRACTION,
+        GAP_DETECTION,
+        CLAIM_EXTRACTION,
+        CLAIM_VERIFICATION,
+        TASK_REGENERATION,
+    ]
 }

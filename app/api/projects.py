@@ -13,11 +13,19 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.graph.review import (
+    ReviewError,
+    apply_edit,
+    regenerate_task,
+    review_summary,
+    set_review,
+)
 from app.graph.workflow import run_sow_pipeline
-from app.llm.client import LLMError
+from app.llm.client import GeminiClient, LLMError
 from app.models import (
     Assumption,
     ClaimRecord,
+    LLMRequest,
     Project,
     ProjectTask,
     SOWChunk,
@@ -26,7 +34,7 @@ from app.models import (
     ValidationLog,
 )
 from app.planning.service import resolve_deadline, schedule_project
-from app.schemas.enums import ProjectStatus
+from app.schemas.enums import ProjectStatus, ReviewStatus
 from app.taskmanager.base import BoardTask
 from app.taskmanager.trello import TrelloAdapter, TrelloError
 
@@ -59,6 +67,9 @@ class TaskView(BaseModel):
     due_date: date | None
     grounding_score: float | None
     validation_status: str
+    review_status: str
+    review_note: str
+    regeneration_count: int
     depends_on: list[str]
     external_ref: str
 
@@ -158,6 +169,9 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
         due_date=task.due_date,
         grounding_score=task.grounding_score,
         validation_status=task.validation_status,
+        review_status=task.review_status,
+        review_note=task.review_note,
+        regeneration_count=task.regeneration_count,
         depends_on=[d.title for d in task.depends_on],
         external_ref=task.external_ref,
     )
@@ -298,6 +312,111 @@ def get_grounding(project_id: str, db: Session = Depends(get_db)) -> dict:
     }
 
 
+class TaskEdit(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    team: str | None = None
+    priority: str | None = None
+    estimated_hours: float | None = None
+
+
+class RejectRequest(BaseModel):
+    reason: str = ""
+    regenerate: bool = True
+
+
+def _get_task(db: Session, project_id: str, task_id: str) -> ProjectTask:
+    task = db.get(ProjectTask, task_id)
+    if task is None or task.project_id != project_id:
+        raise HTTPException(404, "Task not found in this project")
+    return task
+
+
+@router.get("/{project_id}/review")
+def get_review_state(project_id: str, db: Session = Depends(get_db)) -> dict:
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "Project not found")
+    return review_summary(db, project_id)
+
+
+@router.post("/{project_id}/tasks/{task_id}/approve")
+def approve_task(project_id: str, task_id: str, db: Session = Depends(get_db)) -> dict:
+    task = set_review(db, _get_task(db, project_id, task_id), ReviewStatus.APPROVED)
+    return {"task_id": task.id, "review_status": task.review_status}
+
+
+@router.patch("/{project_id}/tasks/{task_id}")
+def edit_task(
+    project_id: str, task_id: str, edit: TaskEdit, db: Session = Depends(get_db)
+) -> TaskView:
+    task = apply_edit(db, _get_task(db, project_id, task_id), **edit.model_dump())
+    return _task_view(db, task)
+
+
+@router.post("/{project_id}/tasks/{task_id}/reject")
+def reject_task(
+    project_id: str, task_id: str, body: RejectRequest, db: Session = Depends(get_db)
+) -> TaskView:
+    """Reject a task and, by default, regenerate that task alone.
+
+    Regeneration is scoped to the one item so the rest of the plan — including
+    everything the PM already approved — is left untouched (brief section 23).
+    """
+    task = _get_task(db, project_id, task_id)
+    set_review(db, task, ReviewStatus.REJECTED, body.reason)
+    if not body.regenerate:
+        return _task_view(db, task)
+
+    try:
+        task = regenerate_task(GeminiClient(), db, task, body.reason)
+    except ReviewError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except LLMError as exc:
+        raise HTTPException(502, f"Regeneration failed: {exc}") from exc
+    return _task_view(db, task)
+
+
+@router.get("/{project_id}/audit")
+def get_audit(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """Every LLM exchange and validation outcome for this project (brief §22, §37)."""
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "Project not found")
+
+    requests = (
+        db.query(LLMRequest)
+        .filter(LLMRequest.project_id == project_id)
+        .order_by(LLMRequest.created_at)
+        .all()
+    )
+    stages = db.query(ValidationLog).filter(ValidationLog.project_id == project_id).all()
+    return {
+        "llm_requests": [
+            {
+                "request_id": r.id,
+                "graph_node": r.graph_node,
+                "model": r.model,
+                "prompt_version": r.prompt_version,
+                "input_hash": r.input_hash[:12],
+                "latency_ms": r.latency_ms,
+                "timestamp": r.created_at,
+                "output_chars": len(r.output or ""),
+            }
+            for r in requests
+        ],
+        "total_requests": len(requests),
+        "validation_stages": [
+            {
+                "stage": s.stage,
+                "passed": s.passed,
+                "detail": s.detail,
+                "grounding_score": s.grounding_score,
+                "validator_version": s.validator_version,
+            }
+            for s in stages
+        ],
+    }
+
+
 @router.post("/{project_id}/approve")
 def approve_project(project_id: str, db: Session = Depends(get_db)) -> dict:
     """PM approval gate. Nothing reaches a task manager before this (brief §23)."""
@@ -321,6 +440,17 @@ def push_to_task_manager(project_id: str, db: Session = Depends(get_db)) -> dict
     if not tasks:
         raise HTTPException(400, "Project has no tasks to push.")
 
+    # Pushing a task the PM rejected would put work the team was told not to do
+    # onto the board, which defeats the review entirely.
+    rejected = [t for t in tasks if t.review_status == ReviewStatus.REJECTED]
+    if rejected:
+        raise HTTPException(
+            409,
+            f"{len(rejected)} task(s) are still rejected. Regenerate, edit, or "
+            "remove them before pushing.",
+        )
+    tasks = [t for t in tasks if t.review_status != ReviewStatus.REJECTED]
+
     board_tasks = []
     for task in tasks:
         section = (
@@ -336,6 +466,7 @@ def push_to_task_manager(project_id: str, db: Session = Depends(get_db)) -> dict
                 status=task.status,
                 due_date=task.due_date,
                 source_status=task.source_status,
+                validation_status=task.validation_status,
                 source_section=section.title if section else "",
                 source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
                 grounding_score=task.grounding_score,

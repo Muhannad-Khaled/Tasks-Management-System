@@ -114,6 +114,99 @@ VERDICT_LABELS = {
 }
 
 
+REVIEW_BADGES = {
+    "pending": "⏳ awaiting review",
+    "approved": "✅ approved",
+    "edited": "✏️ edited by PM",
+    "rejected": "⛔ rejected",
+}
+
+
+def render_review_controls(project_id: str, task: dict) -> None:
+    """Approve, edit, or reject one task.
+
+    Rejection regenerates that task alone, so acting on a bad item does not cost
+    the PM the review they already did on everything else.
+    """
+    st.divider()
+    st.caption(f"Review: {REVIEW_BADGES.get(task['review_status'], task['review_status'])}")
+    if task["regeneration_count"]:
+        st.caption(f"Regenerated {task['regeneration_count']} time(s)")
+    if task["review_note"]:
+        st.caption(f"Note: {task['review_note']}")
+
+    approve_col, reject_col = st.columns(2)
+    if approve_col.button("Approve", key=f"ok-{task['id']}") and api(
+        "POST", f"/projects/{project_id}/tasks/{task['id']}/approve"
+    ):
+        st.rerun()
+
+    with reject_col.popover("Reject & regenerate"):
+        reason = st.text_area(
+            "What is wrong with it?",
+            key=f"why-{task['id']}",
+            placeholder="e.g. the SOW never mentions stress testing",
+        )
+        if st.button("Regenerate this task", key=f"regen-{task['id']}", type="primary"):
+            with st.spinner("Regenerating just this task…"):
+                result = api(
+                    "POST",
+                    f"/projects/{project_id}/tasks/{task['id']}/reject",
+                    json={"reason": reason, "regenerate": True},
+                )
+            if result:
+                st.success("Regenerated.")
+                st.rerun()
+
+    with st.popover("Edit"):
+        new_title = st.text_input("Title", value=task["title"], key=f"t-{task['id']}")
+        new_desc = st.text_area(
+            "Description", value=task["description"], key=f"d-{task['id']}"
+        )
+        st.caption("Editing clears the grounding score: it described the generated wording.")
+        if st.button("Save edit", key=f"save-{task['id']}") and api(
+            "PATCH",
+            f"/projects/{project_id}/tasks/{task['id']}",
+            json={"title": new_title, "description": new_desc},
+        ):
+            st.rerun()
+
+
+def render_audit(project_id: str) -> None:
+    data = api("GET", f"/projects/{project_id}/audit")
+    if not data:
+        return
+    st.caption(
+        "Every model exchange behind this plan, with the prompt version that "
+        "produced it, so a result can be reproduced or explained later."
+    )
+    st.metric("LLM requests", data["total_requests"])
+
+    if requests := data["llm_requests"]:
+        st.subheader("Requests")
+        st.dataframe(
+            [
+                {
+                    "node": r["graph_node"],
+                    "model": r["model"],
+                    "prompt": r["prompt_version"],
+                    "input hash": r["input_hash"],
+                    "latency (ms)": r["latency_ms"],
+                    "output chars": r["output_chars"],
+                }
+                for r in requests
+            ],
+            use_container_width=True,
+        )
+    else:
+        st.info("No model calls recorded for this project.")
+
+    st.subheader("Validation")
+    for stage in data["validation_stages"]:
+        line = f"**{stage['stage']}** ({stage['validator_version']}) — {stage['detail']}"
+        (st.success if stage["passed"] else st.error)(line)
+
+
 def render_grounding(project_id: str) -> None:
     data = api("GET", f"/projects/{project_id}/grounding")
     if not data:
@@ -176,12 +269,16 @@ def render_project(project_id: str, projects: list[dict]) -> None:
     tasks = api("GET", f"/projects/{project_id}/tasks") or []
     assumptions = api("GET", f"/projects/{project_id}/assumptions") or []
 
-    tasks_tab, timeline_tab, grounding_tab, assumptions_tab, approve_tab = st.tabs(
+    review = api("GET", f"/projects/{project_id}/review") or {"counts": {}, "ready": False}
+    pending = review["counts"].get("pending", 0)
+
+    tasks_tab, timeline_tab, grounding_tab, assumptions_tab, audit_tab, approve_tab = st.tabs(
         [
-            "Tasks",
+            f"Tasks ({pending} to review)" if pending else "Tasks",
             "Timeline",
             "Grounding",
             f"Assumptions ({len(assumptions)})",
+            "Audit",
             "Approve & push",
         ]
     )
@@ -225,12 +322,16 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                             st.info(f"**{key}**{page}\n\n{evidence['text']}")
                     if task["external_ref"]:
                         st.caption(f"Trello card: {task['external_ref']}")
+                    render_review_controls(project_id, task)
 
     with timeline_tab:
         render_timeline(project_id)
 
     with grounding_tab:
         render_grounding(project_id)
+
+    with audit_tab:
+        render_audit(project_id)
 
     with assumptions_tab:
         st.caption(
@@ -253,6 +354,22 @@ def render_project(project_id: str, projects: list[dict]) -> None:
             "Nothing reaches Trello until a PM approves. Review the tasks, their "
             "evidence, and the assumptions first."
         )
+        counts = review["counts"]
+        st.markdown(
+            f"**Task review:** {counts.get('approved', 0)} approved · "
+            f"{counts.get('edited', 0)} edited · {counts.get('pending', 0)} pending · "
+            f"{counts.get('rejected', 0)} rejected"
+        )
+        if counts.get("rejected"):
+            st.error(
+                f"{counts['rejected']} task(s) are still rejected. Regenerate or edit "
+                "them before pushing — rejected work must not reach the board."
+            )
+        elif counts.get("pending"):
+            st.warning(
+                f"{counts['pending']} task(s) have not been reviewed yet. You can still "
+                "approve the project, but they will go to the board unreviewed."
+            )
         if project["status"] == "synced":
             st.success("Already pushed to Trello.")
         approved = project["status"] in {"approved", "synced"}

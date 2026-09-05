@@ -38,6 +38,15 @@ class ValidationStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ReviewStatus(StrEnum):
+    """Where a task stands with the PM (brief section 23)."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    EDITED = "edited"
+    REJECTED = "rejected"
+
+
 class ProjectStatus(StrEnum):
     INGESTING = "ingesting"
     PARSING_FAILED = "parsing_failed"

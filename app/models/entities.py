@@ -119,6 +119,11 @@ class ProjectTask(Base):
     grounding_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     validation_status: Mapped[str] = mapped_column(String(32), default="pending")
     external_ref: Mapped[str] = mapped_column(String(255), default="")  # Trello card / Plane issue
+    # PM review, tracked per task so rejecting one item regenerates only that
+    # item rather than discarding the whole plan (brief section 23).
+    review_status: Mapped[str] = mapped_column(String(16), default="pending")
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    regeneration_count: Mapped[int] = mapped_column(Integer, default=0)
 
     project: Mapped[Project] = relationship(back_populates="tasks")
     depends_on: Mapped[list[ProjectTask]] = relationship(

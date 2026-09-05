@@ -39,7 +39,8 @@ from app.ingestion.parser import parse_document
 from app.ingestion.validation import ParsingStatus, validate_parsed_document
 from app.llm.client import GeminiClient, build_chunked_text
 from app.llm.prompts import GAP_DETECTION, SOW_EXTRACTION
-from app.models import Project, ProjectTask
+from app.models import Assumption, Project, ProjectTask
+from app.notifications.discord import notify_review_ready
 from app.planning.service import resolve_deadline, schedule_project
 from app.rag.index import index_document, search
 from app.schemas.enums import ProjectStatus
@@ -238,6 +239,21 @@ def make_grounding_node(client: GeminiClient, db: Session, use_retrieval: bool =
             db, project_id, tasks, groundings, resolve_deadline(db, project_id)
         )
         warnings = [f"validation {s.stage}: {s.detail}" for s in report.failures]
+
+        project = db.get(Project, project_id)
+        counts: dict[str, int] = {}
+        for task in tasks:
+            counts[task.team] = counts.get(task.team, 0) + 1
+        notify_review_ready(
+            project_name=project.name if project else project_id,
+            task_counts=counts,
+            assumption_count=db.query(Assumption)
+            .filter(Assumption.project_id == project_id)
+            .count(),
+            grounding_score=project_grounding_score(groundings),
+            critical_path_length=len(state.get("critical_path", [])),
+            failed_stages=[s.stage for s in report.failures],
+        )
         return {
             "groundings": groundings,
             "grounding_score": project_grounding_score(groundings),
