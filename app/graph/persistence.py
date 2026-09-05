@@ -148,8 +148,18 @@ def persist_assumptions(db: Session, project: Project, assumptions: list[dict]) 
 
 
 def persist_grounding(db: Session, project: Project, groundings: list) -> None:
-    """Write per-claim verdicts and roll the score up onto each task."""
-    db.query(ClaimRecord).filter(ClaimRecord.project_id == project.id).delete()
+    """Write per-claim verdicts and roll the score up onto each task.
+
+    Only the claims of the tasks being persisted are replaced. Clearing the
+    whole project would mean regenerating one task silently destroyed the
+    evidence behind every other task's score, leaving scores on screen with
+    nothing to justify them.
+    """
+    task_ids = [g.task_id for g in groundings]
+    if task_ids:
+        db.query(ClaimRecord).filter(
+            ClaimRecord.project_id == project.id, ClaimRecord.task_id.in_(task_ids)
+        ).delete(synchronize_session=False)
     for grounding in groundings:
         by_id = {j.claim_id: j for j in grounding.judgements}
         for claim in grounding.claims:

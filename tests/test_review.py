@@ -108,6 +108,38 @@ def test_regeneration_replaces_only_the_rejected_task(db, project):
     assert after == before, "regenerating one task changed another"
 
 
+def test_regeneration_preserves_the_other_tasks_claims(db, project):
+    # Regression: persist_grounding cleared every claim in the project, so
+    # regenerating one task destroyed the evidence behind every other task's
+    # score. The scores stayed on screen with nothing left to justify them,
+    # and comparing titles alone did not catch it.
+    tasks = _tasks(db, project)
+    target, others = tasks[0], tasks[1:]
+    before = {
+        t.id: db.query(ClaimRecord).filter(ClaimRecord.task_id == t.id).count() for t in others
+    }
+    assert all(count > 0 for count in before.values()), "fixture should start with claims"
+
+    regenerate_task(RegeneratingStub(citations=[]), db, target, "Too vague")
+
+    db.expire_all()
+    after = {
+        t.id: db.query(ClaimRecord).filter(ClaimRecord.task_id == t.id).count() for t in others
+    }
+    assert after == before, "regenerating one task deleted another task's claims"
+
+
+def test_regeneration_leaves_other_tasks_grounding_scores_intact(db, project):
+    tasks = _tasks(db, project)
+    target, others = tasks[0], tasks[1:]
+    before = {t.id: t.grounding_score for t in others}
+
+    regenerate_task(RegeneratingStub(citations=[]), db, target, "reword")
+
+    db.expire_all()
+    assert {t.id: t.grounding_score for t in _tasks(db, project) if t.id in before} == before
+
+
 def test_regeneration_keeps_the_task_id_so_dependencies_survive(db, project):
     tasks = _tasks(db, project)
     dependent = next(t for t in tasks if t.depends_on)

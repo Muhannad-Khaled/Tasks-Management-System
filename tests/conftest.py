@@ -58,7 +58,11 @@ def _no_embedding(monkeypatch):
 
     Embedding every chunk on every pipeline test took the suite from 20s to
     over four minutes, and retrieval is an aid to grounding rather than a
-    behaviour these tests assert. `tests/test_rag.py` exercises it directly.
+    behaviour these tests assert.
+
+    The consequence is that ChromaDB has no automated coverage at all: indexing
+    and retrieval are only exercised by running the real pipeline. That is a
+    known gap, not a decision that retrieval does not need testing.
     """
     monkeypatch.setattr("app.graph.workflow.index_document", lambda *a, **k: 0)
     monkeypatch.setattr("app.graph.workflow.search", None)
