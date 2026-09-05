@@ -27,7 +27,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.db import SessionLocal
 from app.graph.workflow import run_sow_pipeline
-from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument
+from app.llm.client import GeminiClient
+from app.models import (
+    Assumption,
+    ClaimRecord,
+    Project,
+    ProjectTask,
+    SOWChunk,
+    SOWDocument,
+    ValidationLog,
+)
 from app.schemas.enums import ProjectStatus
 
 CORPUS = Path(__file__).parent.parent / "data" / "sample_sows"
@@ -68,6 +77,33 @@ class DocScore:
     assumptions_found: list[str] = field(default_factory=list)
     assumptions_expected: list[str] = field(default_factory=list)
     provenance_mix: dict[str, int] = field(default_factory=dict)
+    # Grounding (brief sections 16-18)
+    total_claims: int = 0
+    supported_claims: int = 0
+    quantitative_claims: int = 0
+    quantitative_supported: int = 0
+    contradicted: list[str] = field(default_factory=list)
+    unsupported_examples: list[str] = field(default_factory=list)
+    task_verdicts: dict[str, int] = field(default_factory=dict)
+    validation_failures: list[str] = field(default_factory=list)
+
+    @property
+    def grounding_score(self) -> float | None:
+        if not self.total_claims:
+            return None
+        return self.supported_claims / self.total_claims
+
+    @property
+    def quantitative_grounding(self) -> float | None:
+        """Grounding restricted to claims asserting a number, date, or rate.
+
+        Tracked separately because an unsupported number is the failure that
+        actually derails a project, and it is easy for a good overall score to
+        hide a bad one here.
+        """
+        if not self.quantitative_claims:
+            return None
+        return self.quantitative_supported / self.quantitative_claims
 
     @property
     def task_coverage(self) -> float:
@@ -139,6 +175,25 @@ def score_document(db, project: Project, gold: dict) -> DocScore:
         if any(term in explicit_text for term in terms):
             score.hallucinated.append(gap)
 
+    claims = db.query(ClaimRecord).filter(ClaimRecord.project_id == project.id).all()
+    score.total_claims = len(claims)
+    score.supported_claims = sum(1 for c in claims if c.verdict == "supported")
+    quantitative = [c for c in claims if c.is_quantitative]
+    score.quantitative_claims = len(quantitative)
+    score.quantitative_supported = sum(1 for c in quantitative if c.verdict == "supported")
+    score.contradicted = [c.text for c in claims if c.verdict == "contradicted"]
+    score.unsupported_examples = [
+        f"{c.text} — {c.reasoning}" for c in claims if c.verdict == "unsupported"
+    ][:4]
+    for task in tasks:
+        status = task.validation_status or "pending"
+        score.task_verdicts[status] = score.task_verdicts.get(status, 0) + 1
+    score.validation_failures = [
+        f"{s.stage}: {s.detail}"
+        for s in db.query(ValidationLog).filter(ValidationLog.project_id == project.id)
+        if not s.passed
+    ]
+
     expected = [c.lower() for c in gold.get("expected_assumption_categories", [])] or [
         c.lower() for c in gold.get("expected_assumption_or_question_categories", [])
     ]
@@ -151,7 +206,8 @@ def score_document(db, project: Project, gold: dict) -> DocScore:
     return score
 
 
-def extract_all(db) -> dict[str, Project]:
+def extract_all(db, model: str | None = None) -> dict[str, Project]:
+    client = GeminiClient(model=model) if model else None
     projects = {}
     for slug, doc_key in DOCS:
         project = Project(name=f"EVAL {slug}", status=ProjectStatus.INGESTING)
@@ -159,7 +215,9 @@ def extract_all(db) -> dict[str, Project]:
         db.commit()
         print(f"  extracting {slug} …", flush=True)
         try:
-            run_sow_pipeline(db, project.id, str(CORPUS / f"{slug}.pdf"), doc_key)
+            run_sow_pipeline(
+                db, project.id, str(CORPUS / f"{slug}.pdf"), doc_key, client=client
+            )
         except Exception as exc:  # noqa: BLE001 - one bad document must not end the run
             db.rollback()
             db.delete(project)
@@ -192,11 +250,14 @@ def find_existing(db) -> dict[str, Project]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--extract", action="store_true", help="re-run extraction (uses quota)")
+    parser.add_argument(
+        "--model", default=None, help="override the model, e.g. when the default is out of quota"
+    )
     args = parser.parse_args()
 
     db = SessionLocal()
     try:
-        projects = extract_all(db) if args.extract else find_existing(db)
+        projects = extract_all(db, args.model) if args.extract else find_existing(db)
         if not projects:
             print("No EVAL projects found. Run with --extract first.")
             return
@@ -208,19 +269,35 @@ def main() -> None:
             gold = json.loads((GOLD / f"{slug}.json").read_text(encoding="utf-8"))
             scores.append(score_document(db, projects[slug], gold))
 
-        print(f"\n{'document':22s} {'tasks':>5s} {'cover':>6s} {'cite':>6s} {'evid':>6s} {'asm':>6s}  halluc")
-        print("-" * 74)
+        def pct(value: float | None) -> str:
+            return f"{value:6.0%}" if value is not None else "     -"
+
+        header = (
+            f"{'document':22s} {'tasks':>5s} {'cover':>6s} {'cite':>6s} {'evid':>6s} "
+            f"{'asm':>6s} {'grnd':>6s} {'num':>6s}  halluc"
+        )
+        print(f"\n{header}")
+        print("-" * len(header))
         for s in scores:
             print(
-                f"{s.doc:22s} {s.tasks:5d} {s.task_coverage:6.0%} "
-                f"{s.citation_validity:6.0%} {s.evidence_coverage:6.0%} "
-                f"{s.assumption_recall:6.0%}  {','.join(s.hallucinated) or 'none'}"
+                f"{s.doc:22s} {s.tasks:5d} {pct(s.task_coverage)} "
+                f"{pct(s.citation_validity)} {pct(s.evidence_coverage)} "
+                f"{pct(s.assumption_recall)} {pct(s.grounding_score)} "
+                f"{pct(s.quantitative_grounding)}  {','.join(s.hallucinated) or 'none'}"
             )
+        print("\ngrnd = claims supported by the SOW; num = the same for claims asserting numbers")
 
         print("\ndetail")
         for s in scores:
             print(f"\n  {s.doc} ({s.profile})")
             print(f"    provenance     : {s.provenance_mix}")
+            if s.task_verdicts:
+                print(f"    task verdicts  : {s.task_verdicts}")
+            if s.total_claims:
+                print(
+                    f"    claims         : {s.supported_claims}/{s.total_claims} supported"
+                    f" ({s.quantitative_supported}/{s.quantitative_claims} quantitative)"
+                )
             if s.missed:
                 print(f"    missed areas   : {', '.join(s.missed)}")
             if s.assumptions_expected:
@@ -228,13 +305,27 @@ def main() -> None:
                 print(f"    assumptions    : {len(s.assumptions_found)}/{len(s.assumptions_expected)}")
                 if missing:
                     print(f"    gaps unflagged : {', '.join(sorted(missing))}")
+            for failure in s.validation_failures:
+                print(f"    validation     : {failure[:96]}")
+            if s.contradicted:
+                print(f"    CONTRADICTED   : {s.contradicted}")
+            for example in s.unsupported_examples:
+                print(f"    unsupported    : {example[:100]}")
             if s.hallucinated:
                 print(f"    HALLUCINATED   : {', '.join(s.hallucinated)}")
 
+        print()
         worst = min(s.citation_validity for s in scores)
-        print(f"\ncitation validity (min across docs): {worst:.0%}")
+        print(f"citation validity (min across docs): {worst:.0%}")
+        graded = [s for s in scores if s.grounding_score is not None]
+        if graded:
+            total = sum(s.total_claims for s in graded)
+            supported = sum(s.supported_claims for s in graded)
+            print(f"grounding across all documents    : {supported / total:.0%} of {total} claims")
         if any(s.hallucinated for s in scores):
             print("FAIL: a gap the SOW never filled was asserted as explicit fact.")
+        if any(s.contradicted for s in scores):
+            print("FAIL: a claim contradicted by the SOW reached the plan.")
     finally:
         db.close()
 

@@ -30,10 +30,45 @@ VALIDATOR_VERSION = "v1"
 # Words that signal a task belongs to a particular team. Used to catch an item
 # filed under the wrong team, which would send it to the wrong Trello list and
 # the wrong people (brief section 20, "does the task belong to the correct team").
+#
+# Signals must be distinctive to one team. A bare "configur" is not: it flagged
+# "Configure Points Calculation & Expiry Engine" as operations work when
+# configuring a calculation engine is plainly technical. Operations signals name
+# what operations configures — merchants, stores, offers — not the act itself.
 TEAM_SIGNALS = {
-    Team.COMMERCIAL: ("contract", "pricing", "sign-off", "signature", "commercial", "sla"),
-    Team.TECHNICAL: ("api", "integration", "endpoint", "auth", "code", "deploy", "test"),
-    Team.OPERATIONS: ("training", "onboard", "configur", "go-live", "support", "rollout"),
+    Team.COMMERCIAL: (
+        "contract",
+        "pricing",
+        "sign-off",
+        "signature",
+        "commercial terms",
+        "revenue share",
+        "sla",
+    ),
+    Team.TECHNICAL: (
+        "api",
+        "integration",
+        "endpoint",
+        "auth",
+        "engine",
+        "calculation",
+        "accrual logic",
+        "schema",
+        "deploy",
+        "code",
+        "unit test",
+        "end-to-end test",
+    ),
+    Team.OPERATIONS: (
+        "training",
+        "onboard",
+        "merchant configuration",
+        "store configuration",
+        "configure the merchant",
+        "go-live",
+        "hypercare",
+        "rollout",
+    ),
 }
 
 

@@ -200,6 +200,22 @@ def test_business_rules_catch_a_task_filed_under_the_wrong_team():
     assert validate_business_rules([right]).passed
 
 
+@pytest.mark.parametrize(
+    "title,team",
+    [
+        # Regression: a bare "configur" signal filed this as operations work.
+        ("Configure Points Calculation & Expiry Engine", "technical"),
+        ("Configure the offer accrual logic", "technical"),
+        ("Configure the merchant account in production", "operations"),
+        ("Deliver on-ground staff training", "operations"),
+        ("Countersign the commercial contract", "commercial"),
+    ],
+)
+def test_business_rules_do_not_flag_correctly_assigned_work(title, team):
+    result = validate_business_rules([_task(title=title, team=team)])
+    assert result.passed, f"{title!r} wrongly flagged as not belonging to {team}"
+
+
 def test_business_rules_stay_quiet_when_wording_spans_teams():
     # "Test the API after contract sign-off" points at two teams; flagging it
     # either way would be guessing.

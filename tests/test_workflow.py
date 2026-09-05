@@ -133,6 +133,31 @@ def test_project_moves_to_awaiting_approval_not_straight_to_sync(db):
     assert project.status == ProjectStatus.AWAITING_APPROVAL
 
 
+def test_deleting_a_project_takes_its_children_with_it(db):
+    # Regression: without a cascade, SQLAlchemy nulls out project_id instead of
+    # deleting, and the NOT NULL constraint fails. This is the cleanup path for
+    # every run that is abandoned partway, so it must work.
+    from app.models import ClaimRecord, SOWChunk, ValidationLog
+
+    project = _new_project(db)
+    run_sow_pipeline(
+        db,
+        project.id,
+        str(CORPUS / "sow_a_cairomart.pdf"),
+        "SOW-001",
+        client=StubLLM(citations=_real_chunk_keys("sow_a_cairomart", "SOW-001")),
+    )
+    project_id = project.id
+    assert db.query(ProjectTask).filter(ProjectTask.project_id == project_id).count() > 0
+
+    db.delete(project)
+    db.commit()
+
+    for model in (ProjectTask, Assumption, ClaimRecord, ValidationLog):
+        assert db.query(model).filter(model.project_id == project_id).count() == 0, model
+    assert db.query(SOWChunk).count() == 0, "chunks outlived their document"
+
+
 def test_graph_compiles_with_expected_nodes():
     graph = build_graph(StubLLM(), db=None)
     nodes = set(graph.get_graph().nodes)

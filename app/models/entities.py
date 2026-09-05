@@ -49,9 +49,22 @@ class Project(Base):
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     go_live_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
-    sow_documents: Mapped[list[SOWDocument]] = relationship(back_populates="project")
-    tasks: Mapped[list[ProjectTask]] = relationship(back_populates="project")
-    assumptions: Mapped[list[Assumption]] = relationship(back_populates="project")
+    # Deleting a project must take its children with it. Without the cascade,
+    # SQLAlchemy tries to null out project_id instead and the delete fails on
+    # the NOT NULL constraint — which is what happens whenever a run is
+    # abandoned partway and the empty project is cleaned up.
+    sow_documents: Mapped[list[SOWDocument]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    tasks: Mapped[list[ProjectTask]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    assumptions: Mapped[list[Assumption]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    claims: Mapped[list[ClaimRecord]] = relationship(cascade="all, delete-orphan")
+    validation_logs: Mapped[list[ValidationLog]] = relationship(cascade="all, delete-orphan")
+    llm_requests: Mapped[list[LLMRequest]] = relationship(cascade="all, delete-orphan")
 
 
 class SOWDocument(Base):
@@ -67,7 +80,9 @@ class SOWDocument(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     project: Mapped[Project] = relationship(back_populates="sow_documents")
-    sections: Mapped[list[SOWSection]] = relationship(back_populates="document")
+    sections: Mapped[list[SOWSection]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
 
 
 class SOWSection(Base):
@@ -81,7 +96,9 @@ class SOWSection(Base):
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     document: Mapped[SOWDocument] = relationship(back_populates="sections")
-    chunks: Mapped[list[SOWChunk]] = relationship(back_populates="section")
+    chunks: Mapped[list[SOWChunk]] = relationship(
+        back_populates="section", cascade="all, delete-orphan"
+    )
 
 
 class SOWChunk(Base):
