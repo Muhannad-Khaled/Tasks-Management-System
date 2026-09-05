@@ -152,6 +152,53 @@ def test_assumptions_carry_a_default_reason_and_confidence():
     assert len(set(keys)) == len(keys)
 
 
+def test_a_direction_the_sow_points_at_beats_the_generic_default():
+    # Regression: a SOW saying "probably API keys" produced an assumption of
+    # "OAuth 2.0", so the plan contradicted the document it came from. The
+    # reason line said API keys while the value said OAuth.
+    report = _report(
+        FieldFinding(
+            field_key="auth_mechanism",
+            status=SourceStatus.EXPLICIT,
+            value="probably API keys",
+            evidence_chunk_keys=["SOW-001-S01-C01"],
+            note="Auth is to be confirmed with IT.",
+        )
+    )
+    findings, _ = validate_findings(report, PLANNING_FIELDS, VALID_KEYS)
+    assert findings["auth_mechanism"].status == SourceStatus.ASSUMED
+
+    assumption = next(
+        a for a in build_assumptions(findings) if a["category"] == "AUTH_MECHANISM"
+    )
+    assert "api key" in assumption["value"].lower()
+    assert "OAuth" not in assumption["value"]
+
+
+def test_an_explicit_hint_is_used_when_the_model_supplies_one():
+    report = _report(
+        FieldFinding(
+            field_key="auth_mechanism",
+            status=SourceStatus.ASSUMED,
+            value="",
+            hint="mutual TLS, per a passing remark",
+        )
+    )
+    findings, _ = validate_findings(report, PLANNING_FIELDS, VALID_KEYS)
+    assumption = next(
+        a for a in build_assumptions(findings) if a["category"] == "AUTH_MECHANISM"
+    )
+    assert assumption["value"] == "mutual TLS, per a passing remark"
+
+
+def test_fields_with_no_hint_still_get_a_schedulable_default():
+    findings, _ = validate_findings(_report(), PLANNING_FIELDS, VALID_KEYS)
+    assumptions = build_assumptions(findings)
+    assert all(a["value"] for a in assumptions)
+    auth = next(a for a in assumptions if a["category"] == "AUTH_MECHANISM")
+    assert "OAuth" in auth["value"], "the generic default still applies with no hint"
+
+
 def test_stated_fields_produce_no_assumption():
     report = _report(
         FieldFinding(

@@ -115,6 +115,11 @@ def validate_findings(
                     "field, downgraded to assumed"
                 )
                 finding.status = SourceStatus.ASSUMED
+                # Keep the wording as a hint rather than discarding it. The SOW
+                # saying "probably API keys" does not settle the field, but
+                # assuming OAuth instead would contradict the document — worse
+                # than assuming nothing.
+                finding.hint = finding.hint or finding.value
                 finding.value = ""
         by_key[finding.field_key] = finding
 
@@ -142,13 +147,21 @@ def build_assumptions(
         if finding is None or finding.status != SourceStatus.ASSUMED:
             continue
         reason = finding.note.strip() or f"The SOW does not specify the {spec.label}."
+        # A direction the SOW pointed at beats a generic default. Assuming
+        # OAuth for a SOW that says "probably API keys" would have the plan
+        # contradict the document it came from.
+        hint = finding.hint.strip()
+        confidence = CONFIDENCE_BY_CATEGORY.get(spec.category, DEFAULT_CONFIDENCE)
+        if hint:
+            reason = f"{reason} Using the direction the SOW indicates rather than a default."
+            confidence = min(confidence + 0.1, 1.0)
         assumptions.append(
             {
                 "assumption_key": f"A-{len(assumptions) + 1:03d}",
                 "category": spec.category,
-                "value": spec.default,
+                "value": hint or spec.default,
                 "reason": reason,
-                "confidence": CONFIDENCE_BY_CATEGORY.get(spec.category, DEFAULT_CONFIDENCE),
+                "confidence": confidence,
             }
         )
     return assumptions

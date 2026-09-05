@@ -29,7 +29,12 @@ T = TypeVar("T", bound=BaseModel)
 # Preference order when the configured model is unavailable. The brief named
 # "Gemini 3.7 Flash", which is not a real model id, so the model is resolved
 # against what the API actually offers rather than trusted from config.
-_FLASH_PREFERENCES = ("flash-latest", "2.5-flash", "2.0-flash", "flash")
+_FLASH_PREFERENCES = ("flash-latest", "3.7-flash", "3.6-flash", "flash")
+
+# Tried in order when the configured model is overloaded or out of quota.
+# Google's Flash models share capacity unevenly: one can return 503 for minutes
+# while a sibling answers immediately.
+_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest")
 
 
 class LLMError(RuntimeError):
@@ -106,18 +111,54 @@ class GeminiClient:
                     return name
         raise LLMError(f"No usable Gemini model found. Available: {available[:10]}")
 
-    @retry(
-        retry=retry_if_exception_type(TransientLLMError),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
-        stop=stop_after_attempt(5),
-        reraise=True,
-    )
     def _generate(self, prompt_text: str, system: str, schema: type[BaseModel]) -> str:
-        # Resolve lazily on first use: the brief's model name may not exist, and
-        # discovering that at generation time yields a confusing 404 instead of
-        # a clean fallback.
+        """Generate, retrying transient failures and switching model if needed.
+
+        A popular Flash model can stay overloaded for minutes at a time. Failing
+        the whole run because one model is busy — when a sibling model is idle —
+        makes the pipeline unusable at exactly the times it is most wanted. The
+        model that actually served the request is recorded in the audit log, so
+        a fallback is visible rather than silent.
+        """
         if not self._model_resolved:
             self.resolve_model()
+
+        original = self.model
+        tried: list[str] = []
+        for candidate in self._model_candidates():
+            self.model = candidate
+            tried.append(candidate)
+            try:
+                return self._generate_once(prompt_text, system, schema)
+            except QuotaExhausted:
+                logger.warning("Daily quota exhausted for %r; trying another model", candidate)
+                continue
+            except TransientLLMError:
+                logger.warning("%r still unavailable after retries; trying another model", candidate)
+                continue
+
+        self.model = original
+        raise LLMError(
+            f"Every candidate model was unavailable or out of quota (tried: {', '.join(tried)}). "
+            "Google's Flash models are shared and can be busy for minutes at a time; "
+            "wait and retry, or set GEMINI_MODEL to a model with capacity."
+        )
+
+    def _model_candidates(self) -> list[str]:
+        """The configured model first, then siblings to fall back to."""
+        candidates = [self.model]
+        for name in _FALLBACK_MODELS:
+            if name not in candidates:
+                candidates.append(name)
+        return candidates
+
+    @retry(
+        retry=retry_if_exception_type(TransientLLMError),
+        wait=wait_exponential(multiplier=2, min=4, max=30),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    def _generate_once(self, prompt_text: str, system: str, schema: type[BaseModel]) -> str:
         try:
             response = self.client.models.generate_content(
                 model=self.model,

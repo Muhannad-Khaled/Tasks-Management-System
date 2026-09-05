@@ -31,6 +31,14 @@ class FieldFinding(BaseModel):
             "any caveat, such as a conditional or disputed alternative value."
         ),
     )
+    hint: str = Field(
+        default="",
+        description=(
+            "A direction the SOW points at without committing to it, e.g. "
+            "'probably API keys'. Set this instead of value when the SOW gestures "
+            "at an answer without settling it."
+        ),
+    )
 
 
 class GapReport(BaseModel):

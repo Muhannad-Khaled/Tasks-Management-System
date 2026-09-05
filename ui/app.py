@@ -32,9 +32,40 @@ def api(method: str, path: str, **kwargs):
         st.stop()
     if response.status_code >= 400:
         detail = response.json().get("detail", response.text) if response.content else response.text
-        st.error(f"{method} {path} failed ({response.status_code}): {detail}")
+        st.error(friendly_error(response.status_code, str(detail)))
         return None
     return response.json()
+
+
+def friendly_error(status: int, detail: str) -> str:
+    """Turn an API failure into something a PM can act on.
+
+    The provider's errors arrive as raw JSON blobs. Showing those to someone
+    reviewing a project plan tells them nothing about what to do next.
+    """
+    lowered = detail.lower()
+    if "quota" in lowered or "resource_exhausted" in lowered:
+        return (
+            "**The daily Gemini quota is used up.** The free tier allows 20 requests "
+            "per day per model, and a full run costs four. It resets on Google's "
+            "daily schedule — everything already generated stays available in the "
+            "meantime."
+        )
+    if "503" in detail or "unavailable" in lowered or "high demand" in lowered:
+        return (
+            "**Gemini is busy right now.** The model was overloaded and the "
+            "fallback models were too. This clears on its own, usually within a "
+            "few minutes — try again shortly."
+        )
+    if status == 409:
+        return f"**Cannot do that yet.** {detail}"
+    if status == 404:
+        return f"**Not found.** {detail}"
+    return f"{method_label(status)} {detail}"
+
+
+def method_label(status: int) -> str:
+    return "**Something went wrong.**" if status >= 500 else "**Request rejected.**"
 
 
 def render_upload() -> None:
