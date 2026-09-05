@@ -109,6 +109,34 @@ def test_tasks_carry_their_scheduled_dates(client, seeded_project):
     assert all(t["start_date"] and t["due_date"] for t in tasks)
 
 
+def test_grounding_endpoint_reports_scores_and_names_the_failures(client, seeded_project):
+    data = client.get(f"/projects/{seeded_project.id}/grounding").json()
+    # The stub supports one claim per task and fails the quantitative one.
+    assert data["overall_score"] == pytest.approx(0.5)
+    assert data["total_claims"] == 6
+    assert set(data["by_team"]) == {"commercial", "technical", "operations"}
+    assert len(data["failures"]) == 3
+    assert all(f["claim"] and f["reasoning"] for f in data["failures"])
+    assert {s["stage"] for s in data["validation_stages"]} == {
+        "schema",
+        "grounding",
+        "evidence",
+        "business_rules",
+        "dependencies",
+        "timeline",
+    }
+
+
+def test_grounding_endpoint_404s_for_an_unknown_project(client):
+    assert client.get("/projects/nope/grounding").status_code == 404
+
+
+def test_tasks_expose_their_grounding_score(client, seeded_project):
+    tasks = client.get(f"/projects/{seeded_project.id}/tasks").json()
+    assert all(t["grounding_score"] is not None for t in tasks)
+    assert all(t["validation_status"] in {"accept", "review", "reject"} for t in tasks)
+
+
 def test_project_list_reports_task_and_assumption_counts(client, seeded_project):
     projects = client.get("/projects").json()
     row = next(p for p in projects if p["id"] == seeded_project.id)

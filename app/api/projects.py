@@ -15,7 +15,16 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.graph.workflow import run_sow_pipeline
 from app.llm.client import LLMError
-from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument, SOWSection
+from app.models import (
+    Assumption,
+    ClaimRecord,
+    Project,
+    ProjectTask,
+    SOWChunk,
+    SOWDocument,
+    SOWSection,
+    ValidationLog,
+)
 from app.planning.service import resolve_deadline, schedule_project
 from app.schemas.enums import ProjectStatus
 from app.taskmanager.base import BoardTask
@@ -48,6 +57,8 @@ class TaskView(BaseModel):
     estimated_hours: float | None
     start_date: date | None
     due_date: date | None
+    grounding_score: float | None
+    validation_status: str
     depends_on: list[str]
     external_ref: str
 
@@ -145,6 +156,8 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
         estimated_hours=task.estimated_hours,
         start_date=task.start_date,
         due_date=task.due_date,
+        grounding_score=task.grounding_score,
+        validation_status=task.validation_status,
         depends_on=[d.title for d in task.depends_on],
         external_ref=task.external_ref,
     )
@@ -226,6 +239,61 @@ def get_timeline(project_id: str, db: Session = Depends(get_db)) -> dict:
             {"task_id": t.task_id, "title": t.title, "slack_days": t.slack_days}
             for t in sorted(schedule.tasks.values(), key=lambda x: -x.slack_days)
             if t.slack_days > 0
+        ],
+    }
+
+
+@router.get("/{project_id}/grounding")
+def get_grounding(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """Grounding dashboard data (brief section 36).
+
+    Reports the score by team and every claim the SOW did not establish, so a
+    failure can be inspected rather than just counted.
+    """
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "Project not found")
+
+    claims = db.query(ClaimRecord).filter(ClaimRecord.project_id == project_id).all()
+    tasks = {t.id: t for t in db.query(ProjectTask).filter(ProjectTask.project_id == project_id)}
+
+    supported = sum(1 for c in claims if c.verdict == "supported")
+    by_team: dict[str, dict[str, int]] = {}
+    for claim in claims:
+        team = tasks[claim.task_id].team if claim.task_id in tasks else "unknown"
+        bucket = by_team.setdefault(team, {"supported": 0, "total": 0})
+        bucket["total"] += 1
+        bucket["supported"] += claim.verdict == "supported"
+
+    stages = db.query(ValidationLog).filter(ValidationLog.project_id == project_id).all()
+    return {
+        "overall_score": supported / len(claims) if claims else None,
+        "total_claims": len(claims),
+        "supported_claims": supported,
+        "by_team": {
+            team: {
+                "score": b["supported"] / b["total"] if b["total"] else None,
+                "claims": b["total"],
+            }
+            for team, b in sorted(by_team.items())
+        },
+        "task_status_counts": {
+            status: sum(1 for t in tasks.values() if t.validation_status == status)
+            for status in ("accept", "review", "reject")
+        },
+        "failures": [
+            {
+                "claim": c.text,
+                "verdict": c.verdict,
+                "reasoning": c.reasoning,
+                "task": tasks[c.task_id].title if c.task_id in tasks else "",
+                "team": tasks[c.task_id].team if c.task_id in tasks else "",
+                "is_quantitative": c.is_quantitative,
+            }
+            for c in claims
+            if c.verdict != "supported"
+        ],
+        "validation_stages": [
+            {"stage": s.stage, "passed": s.passed, "detail": s.detail} for s in stages
         ],
     }
 

@@ -107,6 +107,61 @@ def render_timeline(project_id: str) -> None:
             st.markdown(f"- {task['title']} — **{task['slack_days']} day(s)** of slack")
 
 
+VERDICT_LABELS = {
+    "unsupported": ("❌", "Nothing in the SOW establishes this"),
+    "partial": ("🟡", "Related evidence, but it does not establish this"),
+    "contradicted": ("🚫", "The SOW says otherwise"),
+}
+
+
+def render_grounding(project_id: str) -> None:
+    data = api("GET", f"/projects/{project_id}/grounding")
+    if not data:
+        return
+    if data["overall_score"] is None:
+        st.info("No claims have been checked yet.")
+        return
+
+    st.caption(
+        "Every task is split into atomic claims and each is checked against the "
+        "SOW on its own. A task can describe the right work and still assert a "
+        "number the SOW never gave."
+    )
+
+    left, mid, right = st.columns(3)
+    left.metric("Overall grounding", f"{data['overall_score']:.0%}")
+    mid.metric("Claims checked", data["total_claims"])
+    right.metric("Unsupported", data["total_claims"] - data["supported_claims"])
+
+    counts = data["task_status_counts"]
+    st.markdown(
+        f"**Tasks:** {counts['accept']} accepted · {counts['review']} need review · "
+        f"{counts['reject']} rejected"
+    )
+
+    st.subheader("By team")
+    for team, stats in data["by_team"].items():
+        if stats["score"] is not None:
+            icon = TEAM_COLORS.get(team, "⚪")
+            st.markdown(f"{icon} **{team.title()}** — {stats['score']:.0%} ({stats['claims']} claims)")
+
+    st.subheader("Validation stages")
+    for stage in data["validation_stages"]:
+        line = f"**{stage['stage']}** — {stage['detail']}"
+        (st.success if stage["passed"] else st.error)(line)
+
+    if failures := data["failures"]:
+        st.subheader(f"Claims the SOW does not support ({len(failures)})")
+        st.caption("These should be removed, corrected, or converted into assumptions.")
+        for failure in failures:
+            icon, meaning = VERDICT_LABELS.get(failure["verdict"], ("❓", failure["verdict"]))
+            with st.expander(f"{icon} {failure['claim'][:80]}"):
+                st.caption(f"{meaning} · from task: {failure['task']}")
+                st.write(failure["reasoning"])
+    else:
+        st.success("Every claim is supported by the SOW.")
+
+
 def render_project(project_id: str, projects: list[dict]) -> None:
     project = next((p for p in projects if p["id"] == project_id), None)
     if not project:
@@ -121,8 +176,14 @@ def render_project(project_id: str, projects: list[dict]) -> None:
     tasks = api("GET", f"/projects/{project_id}/tasks") or []
     assumptions = api("GET", f"/projects/{project_id}/assumptions") or []
 
-    tasks_tab, timeline_tab, assumptions_tab, approve_tab = st.tabs(
-        ["Tasks", "Timeline", f"Assumptions ({len(assumptions)})", "Approve & push"]
+    tasks_tab, timeline_tab, grounding_tab, assumptions_tab, approve_tab = st.tabs(
+        [
+            "Tasks",
+            "Timeline",
+            "Grounding",
+            f"Assumptions ({len(assumptions)})",
+            "Approve & push",
+        ]
     )
 
     with tasks_tab:
@@ -135,7 +196,19 @@ def render_project(project_id: str, projects: list[dict]) -> None:
             st.subheader(f"{TEAM_COLORS.get(team, '⚪')} {team.title()} ({len(team_tasks)})")
             for task in team_tasks:
                 icon, meaning = SOURCE_BADGES.get(task["source_status"], ("❓", "Unknown"))
-                with st.expander(f"{icon} {task['title']}  ·  {task['priority'].upper()}"):
+                grounding = (
+                    f"  ·  {task['grounding_score']:.0%} grounded"
+                    if task.get("grounding_score") is not None
+                    else ""
+                )
+                with st.expander(
+                    f"{icon} {task['title']}  ·  {task['priority'].upper()}{grounding}"
+                ):
+                    if task.get("validation_status") in {"review", "reject"}:
+                        st.warning(
+                            f"Grounding: {task['validation_status'].upper()} — "
+                            "see the Grounding tab for the specific claims."
+                        )
                     if task["description"]:
                         st.write(task["description"])
                     st.caption(f"{meaning} · {task['estimated_hours'] or '?'}h estimated")
@@ -155,6 +228,9 @@ def render_project(project_id: str, projects: list[dict]) -> None:
 
     with timeline_tab:
         render_timeline(project_id)
+
+    with grounding_tab:
+        render_grounding(project_id)
 
     with assumptions_tab:
         st.caption(
