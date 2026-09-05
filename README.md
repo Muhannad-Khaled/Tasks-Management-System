@@ -16,7 +16,8 @@ task manager without a human approving it.
 | M1 — SOW → extraction → tasks → Trello → UI | done, verified end to end against a real Trello board |
 | M2 — assumption engine | done |
 | M3 — dependency validation, critical path, timeline | done |
-| M4–M7 — grounding, HITL, RAG, evaluation | not started |
+| M4 — claim-level grounding, validation pipeline | done |
+| M5–M7 — HITL, RAG copilot, evaluation | not started |
 
 Extraction quality against the gold standards (`gemini-3.7-flash`):
 
@@ -41,6 +42,10 @@ docker compose up -d
 
 Add your Google AI Studio key to `.env` as `GEMINI_API_KEY`, plus Trello
 credentials if you want to push a board.
+
+Note the Gemini free tier allows **20 requests per day per model**. A full
+pipeline run costs four: extraction, gap audit, claim extraction, verification.
+`scripts/seed_demo.py` runs the pipeline with a stubbed model and spends none.
 
 Run the API and the UI in two terminals:
 
@@ -77,6 +82,9 @@ extraction is stubbed in `tests/factories.py`.
 | `app/llm/` | Gemini client with structured output, response caching, audit logging; versioned prompts |
 | `app/graph/` | LangGraph workflow, assumption engine, persistence |
 | `app/planning/` | Dependency validation, CPM critical path, scheduling |
+| `app/grounding/` | Claim extraction, evidence retrieval, verification, scoring |
+| `app/validation/` | The six-stage validation pipeline |
+| `app/rag/` | ChromaDB index over SOW chunks |
 | `evals/` | Scores a real extraction against the gold standards |
 | `app/taskmanager/` | Platform-neutral task interface plus the Trello adapter |
 | `app/api/` | FastAPI routes |
@@ -114,3 +122,16 @@ removed and reported rather than allowed to reach the scheduler, and the critica
 path comes from a plain CPM pass — no model involved. It is computed across the
 whole project, because the delays that matter run between teams: technical
 validation holding up operations configuration, not one team's internal order.
+
+**Grounding is per claim, not per task.** A task can describe the right work and
+still assert a number the SOW never gave, so each task is split into atomic
+claims and each claim is judged on its own evidence. On a real run the model
+generated "perform stress testing" for a SOW that specifies performance targets
+but never asks for stress testing; the claim was caught while the rest of the
+task was accepted. Score is supported/total, and a single contradicted claim
+rejects a task outright instead of being averaged away.
+
+**The whole project is grounded in two LLM calls.** The free tier allows 20
+requests per day, so a call per task spent a day's budget on one project. Claims
+for every task are extracted in one call and judged in another; a test pins that
+budget so the shape cannot regress.
