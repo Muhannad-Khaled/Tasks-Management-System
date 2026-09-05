@@ -17,7 +17,8 @@ task manager without a human approving it.
 | M2 — assumption engine | done |
 | M3 — dependency validation, critical path, timeline | done |
 | M4 — claim-level grounding, validation pipeline | done |
-| M5–M7 — HITL, RAG copilot, evaluation | not started |
+| M5 — PM review, partial regeneration, audit, notifications | done |
+| M6–M7 — RAG copilot, Plane adapter, evaluation | not started |
 
 Extraction quality against the gold standards (`gemini-3.7-flash`):
 
@@ -85,6 +86,7 @@ extraction is stubbed in `tests/factories.py`.
 | `app/grounding/` | Claim extraction, evidence retrieval, verification, scoring |
 | `app/validation/` | The six-stage validation pipeline |
 | `app/rag/` | ChromaDB index over SOW chunks |
+| `app/notifications/` | Discord webhooks |
 | `evals/` | Scores a real extraction against the gold standards |
 | `app/taskmanager/` | Platform-neutral task interface plus the Trello adapter |
 | `app/api/` | FastAPI routes |
@@ -135,3 +137,11 @@ rejects a task outright instead of being averaged away.
 requests per day, so a call per task spent a day's budget on one project. Claims
 for every task are extracted in one call and judged in another; a test pins that
 budget so the shape cannot regress.
+
+**Rejecting one task regenerates one task.** The PM reviews per item, and a
+rejected task is rewritten in place — it keeps its id, so dependencies and the
+schedule survive, and everything already approved is left alone. On a live run a
+task asserting "enable production environment on launch date", which the SOW
+never states, came back without that claim and scored 50% → 67%; the other five
+tasks were byte-identical. Editing a task clears its grounding score, because
+that score described generated wording and the text is now the PM's.
