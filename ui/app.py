@@ -69,31 +69,39 @@ def method_label(status: int) -> str:
 
 
 def render_upload() -> None:
-    st.header("Upload a Statement of Work")
-    st.caption(
-        "The SOW is the single source of truth. Everything generated below "
-        "traces back to a specific chunk of this document."
-    )
-    uploaded = st.file_uploader("SOW file", type=["pdf", "docx", "txt"])
-    if uploaded and st.button("Process SOW", type="primary"):
-        with st.spinner("Parsing, validating, and extracting…"):
-            result = api(
-                "POST",
-                "/projects/upload",
-                files={"file": (uploaded.name, uploaded.getvalue())},
-            )
-        if not result:
-            return
-        if result.get("error"):
-            st.error(f"Parsing status: {result['parsing_status']} — {result['error']}")
-        else:
-            st.success(
-                f"Extracted {result['task_count']} tasks "
-                f"(parsing status: {result['parsing_status']})."
-            )
-            st.session_state["project_id"] = result["project_id"]
-        for warning in result.get("warnings", []):
-            st.warning(warning)
+    # Collapsed by default and explicitly labelled: sitting open above the
+    # selected project made it look like uploading would add to that project.
+    # It never does — one SOW is one project.
+    with st.expander("➕ Upload a SOW — starts a new project", expanded=False):
+        st.caption(
+            "Each upload creates its own project. It never merges into the "
+            "project selected in the sidebar, and re-uploading the same SOW "
+            "gives you a second, separate project rather than replacing the first."
+        )
+        st.caption(
+            "The SOW is the single source of truth: every task generated from it "
+            "traces back to a specific chunk of the document."
+        )
+        uploaded = st.file_uploader("SOW file", type=["pdf", "docx", "txt"])
+        if uploaded and st.button("Process SOW", type="primary"):
+            with st.spinner("Parsing, validating, extracting, and grounding…"):
+                result = api(
+                    "POST",
+                    "/projects/upload",
+                    files={"file": (uploaded.name, uploaded.getvalue())},
+                )
+            if not result:
+                return
+            if result.get("error"):
+                st.error(f"Parsing status: {result['parsing_status']} — {result['error']}")
+            else:
+                st.success(
+                    f"Created a new project with {result['task_count']} tasks "
+                    f"(parsing status: {result['parsing_status']})."
+                )
+                st.session_state["project_id"] = result["project_id"]
+            for warning in result.get("warnings", []):
+                st.warning(warning)
 
 
 def render_timeline(project_id: str) -> None:

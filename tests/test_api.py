@@ -66,6 +66,26 @@ def test_approve_moves_project_to_approved(client, seeded_project, db):
     assert seeded_project.status == ProjectStatus.APPROVED
 
 
+def test_upload_never_merges_into_an_existing_project(client, db, seeded_project, monkeypatch):
+    # The uploader sits near the selected project in the UI, so it is natural to
+    # assume an upload adds to it. It must not: one SOW is one project, and
+    # mixing two merchants' work into one plan would be silent corruption.
+    from app.api import projects as projects_api
+    from app.llm.client import LLMError
+
+    tasks_before = client.get(f"/projects/{seeded_project.id}/tasks").json()
+    monkeypatch.setattr(
+        projects_api, "run_sow_pipeline", lambda *a, **k: (_ for _ in ()).throw(LLMError("stop"))
+    )
+    client.post(
+        "/projects/upload",
+        files={"file": ("sow_b_quickbite.pdf", (CORPUS / "sow_b_quickbite.pdf").read_bytes())},
+    )
+
+    after = client.get(f"/projects/{seeded_project.id}/tasks").json()
+    assert after == tasks_before, "an upload changed a different project"
+
+
 def test_upload_rejects_unsupported_formats(client):
     resp = client.post("/projects/upload", files={"file": ("sow.rtf", b"data")})
     assert resp.status_code == 400
