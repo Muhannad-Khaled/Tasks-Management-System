@@ -65,6 +65,48 @@ def render_upload() -> None:
             st.warning(warning)
 
 
+def render_timeline(project_id: str) -> None:
+    timeline = api("GET", f"/projects/{project_id}/timeline")
+    if not timeline:
+        return
+
+    if timeline["deadline_breach"]:
+        st.error(f"⚠️ {timeline['deadline_breach']}")
+    elif timeline["deadline"]:
+        st.success(f"Schedule fits the SOW date of {timeline['deadline']}.")
+
+    left, mid, right = st.columns(3)
+    left.metric("Start", timeline["project_start"] or "—")
+    mid.metric("End", timeline["project_end"] or "—")
+    right.metric("Working days", timeline["duration_working_days"])
+
+    for warning in timeline["warnings"]:
+        if "dependency" in warning:
+            st.warning(warning)
+
+    st.subheader("Critical path")
+    st.caption(
+        "These tasks have no slack. Any of them slipping pushes the whole "
+        "project out, and the chain runs across teams rather than within one."
+    )
+    critical = timeline["critical_path"]
+    if not critical:
+        st.info("No tasks scheduled yet.")
+    for step, task in enumerate(critical, start=1):
+        icon = TEAM_COLORS.get(task["team"], "⚪")
+        st.markdown(
+            f"**{step}. {icon} {task['title']}**  \n"
+            f"{task['start_date']} → {task['due_date']} · {task['duration_days']} day(s) · "
+            f"{task['team']}"
+        )
+
+    if slack := timeline["slack"]:
+        st.subheader("Tasks with slack")
+        st.caption("These can start later without delaying go-live.")
+        for task in slack:
+            st.markdown(f"- {task['title']} — **{task['slack_days']} day(s)** of slack")
+
+
 def render_project(project_id: str, projects: list[dict]) -> None:
     project = next((p for p in projects if p["id"] == project_id), None)
     if not project:
@@ -79,8 +121,8 @@ def render_project(project_id: str, projects: list[dict]) -> None:
     tasks = api("GET", f"/projects/{project_id}/tasks") or []
     assumptions = api("GET", f"/projects/{project_id}/assumptions") or []
 
-    tasks_tab, assumptions_tab, approve_tab = st.tabs(
-        ["Tasks", f"Assumptions ({len(assumptions)})", "Approve & push"]
+    tasks_tab, timeline_tab, assumptions_tab, approve_tab = st.tabs(
+        ["Tasks", "Timeline", f"Assumptions ({len(assumptions)})", "Approve & push"]
     )
 
     with tasks_tab:
@@ -97,6 +139,8 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                     if task["description"]:
                         st.write(task["description"])
                     st.caption(f"{meaning} · {task['estimated_hours'] or '?'}h estimated")
+                    if task["start_date"]:
+                        st.caption(f"Scheduled: {task['start_date']} → {task['due_date']}")
                     if task["depends_on"]:
                         st.caption("Blocked by: " + "; ".join(task["depends_on"]))
                     if task["source_section"]:
@@ -108,6 +152,9 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                             st.info(f"**{key}**{page}\n\n{evidence['text']}")
                     if task["external_ref"]:
                         st.caption(f"Trello card: {task['external_ref']}")
+
+    with timeline_tab:
+        render_timeline(project_id)
 
     with assumptions_tab:
         st.caption(

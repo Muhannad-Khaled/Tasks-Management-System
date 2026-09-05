@@ -60,22 +60,46 @@ def test_explicit_claim_citing_a_nonexistent_chunk_is_downgraded():
     assert findings["earn_rate"].status == SourceStatus.ASSUMED
 
 
-@pytest.mark.parametrize(
-    "value",
-    ["TBD", "to be confirmed", "standard scheme", "probably API keys", "industry-standard", ""],
-)
-def test_non_committal_values_do_not_count_as_stated(value):
-    # "Standard scheme" is the SOW declining to specify, not a specification.
+def _finding_status(value: str) -> SourceStatus:
     report = _report(
         FieldFinding(
-            field_key="earn_rate",
+            field_key="pricing_terms",
             status=SourceStatus.EXPLICIT,
             value=value,
             evidence_chunk_keys=["SOW-001-S01-C01"],
         )
     )
     findings, _ = validate_findings(report, PLANNING_FIELDS, VALID_KEYS)
-    assert findings["earn_rate"].status == SourceStatus.ASSUMED
+    return findings["pricing_terms"].status
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["TBD", "to be confirmed", "standard scheme", "probably API keys", "industry-standard", ""],
+)
+def test_non_committal_values_do_not_count_as_stated(value):
+    # "Standard scheme" is the SOW declining to specify, not a specification.
+    assert _finding_status(value) == SourceStatus.ASSUMED
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2.5% of the value of each redeemed offer (standard LoyaltyCo revenue-share model)",
+        "10 points per 1 USD, the standard scheme",
+        "approximately 50 transactions per second",
+    ],
+)
+def test_a_quantified_value_survives_an_incidental_hedge_word(value):
+    # Regression: substring-matching "standard" demoted a stated 2.5% revenue
+    # share into an invented assumption — turning a fact the SOW gives into a
+    # gap is the same class of error as inventing one.
+    assert _finding_status(value) == SourceStatus.EXPLICIT
+
+
+@pytest.mark.parametrize("value", ["10 points per 1 USD, to be confirmed", "5 days (TBD)"])
+def test_an_explicitly_deferred_value_is_a_gap_even_when_quantified(value):
+    assert _finding_status(value) == SourceStatus.ASSUMED
 
 
 def test_a_properly_cited_concrete_value_survives():

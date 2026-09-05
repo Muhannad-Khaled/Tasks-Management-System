@@ -43,8 +43,11 @@ __all__ = ["CORPUS", "StubLLM"]
 def _schema():
     assert engine.url.database == TEST_DB, (
         f"tests must not run against {engine.url.database!r}; "
-        "the cleanup step truncates every table"
+        "the cleanup step drops every table"
     )
+    # Rebuilt from the models each session, so a new column never leaves the
+    # test schema stale — create_all alone does not alter existing tables.
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield
 

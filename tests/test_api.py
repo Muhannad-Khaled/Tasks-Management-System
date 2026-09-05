@@ -89,6 +89,26 @@ def test_failed_extraction_leaves_no_orphan_project(client, db, monkeypatch):
     assert db.query(Project).count() == before
 
 
+def test_timeline_reports_a_cross_team_critical_path(client, seeded_project):
+    timeline = client.get(f"/projects/{seeded_project.id}/timeline").json()
+    assert timeline["duration_working_days"] > 0
+    assert timeline["project_start"] and timeline["project_end"]
+    # The stub's tasks form a strict commercial -> technical -> operations chain,
+    # so every one of them is critical and the path spans all three teams.
+    path = timeline["critical_path"]
+    assert [t["team"] for t in path] == ["commercial", "technical", "operations"]
+    assert all(t["start_date"] and t["due_date"] for t in path)
+
+
+def test_timeline_404s_for_an_unknown_project(client):
+    assert client.get("/projects/does-not-exist/timeline").status_code == 404
+
+
+def test_tasks_carry_their_scheduled_dates(client, seeded_project):
+    tasks = client.get(f"/projects/{seeded_project.id}/tasks").json()
+    assert all(t["start_date"] and t["due_date"] for t in tasks)
+
+
 def test_project_list_reports_task_and_assumption_counts(client, seeded_project):
     projects = client.get("/projects").json()
     row = next(p for p in projects if p["id"] == seeded_project.id)

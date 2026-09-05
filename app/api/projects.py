@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -15,6 +16,7 @@ from app.core.db import get_db
 from app.graph.workflow import run_sow_pipeline
 from app.llm.client import LLMError
 from app.models import Assumption, Project, ProjectTask, SOWChunk, SOWDocument, SOWSection
+from app.planning.service import resolve_deadline, schedule_project
 from app.schemas.enums import ProjectStatus
 from app.taskmanager.base import BoardTask
 from app.taskmanager.trello import TrelloAdapter, TrelloError
@@ -44,6 +46,8 @@ class TaskView(BaseModel):
     source_section: str | None
     source_chunk_keys: list[str]
     estimated_hours: float | None
+    start_date: date | None
+    due_date: date | None
     depends_on: list[str]
     external_ref: str
 
@@ -139,6 +143,8 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
         source_section=section.title if section else None,
         source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
         estimated_hours=task.estimated_hours,
+        start_date=task.start_date,
+        due_date=task.due_date,
         depends_on=[d.title for d in task.depends_on],
         external_ref=task.external_ref,
     )
@@ -178,6 +184,49 @@ def get_evidence(project_id: str, chunk_key: str, db: Session = Depends(get_db))
         "text": chunk.text,
         "page": chunk.page,
         "section": section.title if section else None,
+    }
+
+
+@router.get("/{project_id}/timeline")
+def get_timeline(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """Recompute the schedule and report the critical path.
+
+    Recomputed rather than read back so an edited estimate or dependency is
+    reflected without re-running extraction.
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project_id).all()
+    existing_starts = [t.start_date for t in tasks if t.start_date]
+    start = min(existing_starts) if existing_starts else (project.start_date or date.today())  # noqa: DTZ011
+    deadline = resolve_deadline(db, project_id, None)
+
+    schedule, warnings = schedule_project(db, project_id, start, deadline)
+    return {
+        "project_start": schedule.project_start,
+        "project_end": schedule.project_end,
+        "duration_working_days": schedule.duration_days,
+        "deadline": deadline,
+        "deadline_breach": schedule.deadline_breach,
+        "warnings": warnings,
+        "critical_path": [
+            {
+                "task_id": t.task_id,
+                "title": t.title,
+                "team": t.team,
+                "start_date": t.start_date,
+                "due_date": t.due_date,
+                "duration_days": t.duration_days,
+            }
+            for t in schedule.critical_path
+        ],
+        "slack": [
+            {"task_id": t.task_id, "title": t.title, "slack_days": t.slack_days}
+            for t in sorted(schedule.tasks.values(), key=lambda x: -x.slack_days)
+            if t.slack_days > 0
+        ],
     }
 
 

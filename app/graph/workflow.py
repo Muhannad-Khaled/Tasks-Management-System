@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
@@ -36,6 +37,7 @@ from app.ingestion.validation import ParsingStatus, validate_parsed_document
 from app.llm.client import GeminiClient, build_chunked_text
 from app.llm.prompts import GAP_DETECTION, SOW_EXTRACTION
 from app.models import Project
+from app.planning.service import resolve_deadline, schedule_project
 from app.schemas.enums import ProjectStatus
 from app.schemas.fields import PLANNING_FIELDS
 from app.schemas.gaps import GapReport
@@ -54,6 +56,8 @@ class SOWState(TypedDict, total=False):
     extraction: StructuredSOW
     gap_findings: dict
     assumptions: list[dict]
+    schedule: Any
+    critical_path: list[str]
     task_count: int
     assumption_count: int
     warnings: Annotated[list[str], lambda a, b: a + b]
@@ -161,8 +165,12 @@ def make_persist_node(db: Session):
         # The engine's audit is authoritative over whatever the extraction pass
         # happened to volunteer, so its assumptions replace those.
         assumptions = persist_assumptions(db, project, state.get("assumptions", []))
+        info = extraction.project_info
         project.status = ProjectStatus.AWAITING_APPROVAL
-        project.name = extraction.project_info.project_name or project.name
+        project.name = info.project_name or project.name
+        project.merchant_name = info.merchant_name or ""
+        project.start_date = info.start_date
+        project.go_live_date = info.go_live_date or info.end_date
         db.commit()
         warnings = (
             [f"dropped {len(fabricated)} citation(s) not present in the SOW: {fabricated[:5]}"]
@@ -178,6 +186,25 @@ def make_persist_node(db: Session):
     return _node_persist
 
 
+def make_schedule_node(db: Session):
+    """Date the plan and find its critical path, after tasks exist to schedule."""
+
+    def _node_schedule(state: SOWState) -> SOWState:
+        project_id = state["project_id"]
+        info = state["extraction"].project_info
+        # A project start is a local calendar date, not an instant.
+        start = info.start_date or date.today()  # noqa: DTZ011
+        deadline = resolve_deadline(db, project_id)
+        schedule, warnings = schedule_project(db, project_id, start, deadline)
+        return {
+            "schedule": schedule,
+            "critical_path": [t.task_id for t in schedule.critical_path],
+            "warnings": warnings,
+        }
+
+    return _node_schedule
+
+
 def build_graph(client: GeminiClient, db: Session):
     graph = StateGraph(SOWState)
     graph.add_node("parse", _node_parse)
@@ -185,6 +212,7 @@ def build_graph(client: GeminiClient, db: Session):
     graph.add_node("parsing_failed", _node_parsing_failed)
     graph.add_node("extract", make_extract_node(client, db))
     graph.add_node("gap_audit", make_gap_audit_node(client, db))
+    graph.add_node("schedule", make_schedule_node(db))
     graph.add_node("persist", make_persist_node(db))
 
     graph.set_entry_point("parse")
@@ -199,7 +227,9 @@ def build_graph(client: GeminiClient, db: Session):
     graph.add_edge("parsing_failed", END)
     graph.add_edge("extract", "persist")
     graph.add_edge("gap_audit", "persist")
-    graph.add_edge("persist", END)
+    # Scheduling needs the tasks and their dependency edges to exist first.
+    graph.add_edge("persist", "schedule")
+    graph.add_edge("schedule", END)
     return graph.compile()
 
 

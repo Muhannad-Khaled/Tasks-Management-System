@@ -13,6 +13,7 @@ foundations were quietly invented.
 from __future__ import annotations
 
 import logging
+import re
 
 from app.graph.persistence import normalize_citation
 from app.schemas.enums import SourceStatus
@@ -27,21 +28,30 @@ _REQUIRES_EVIDENCE = {SourceStatus.EXPLICIT, SourceStatus.INFERRED}
 
 # Wording that gestures at a value without settling it. The prompt says to treat
 # these as gaps; this is the deterministic backstop for when it does not.
-_NON_COMMITTAL = (
+#
+# Strong markers defer the answer outright, so they demote the field whatever
+# else the value says.
+_DEFERS_THE_ANSWER = (
     "tbd",
     "to be confirmed",
     "to be agreed",
     "to be determined",
     "to be provided",
-    "standard",
-    "industry-standard",
-    "probably",
+    "to be defined",
     "not stated",
     "not specified",
     "unspecified",
     "unknown",
     "n/a",
 )
+
+# Weak markers only mean vagueness when nothing concrete accompanies them.
+# "Standard revenue-share model" settles nothing, but "2.5% of each redeemed
+# offer (standard LoyaltyCo model)" does — demoting that would turn a stated
+# fact into an invented assumption, the exact error this system exists to avoid.
+_VAGUE_UNLESS_QUANTIFIED = ("standard", "typical", "usual", "probably", "likely", "approximately")
+
+_HAS_QUANTITY = re.compile(r"\d")
 
 CONFIDENCE_BY_CATEGORY = {
     "SCHEDULE": 0.6,
@@ -57,10 +67,15 @@ def render_field_list(fields: list[FieldSpec]) -> str:
 
 
 def _is_non_committal(value: str) -> bool:
+    """Whether a value gestures at an answer without actually giving one."""
     lowered = value.strip().lower()
     if not lowered:
         return True
-    return any(marker in lowered for marker in _NON_COMMITTAL)
+    if any(marker in lowered for marker in _DEFERS_THE_ANSWER):
+        return True
+    if any(marker in lowered for marker in _VAGUE_UNLESS_QUANTIFIED):
+        return not _HAS_QUANTITY.search(lowered)
+    return False
 
 
 def validate_findings(

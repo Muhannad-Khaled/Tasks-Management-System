@@ -32,6 +32,11 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="ingesting")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    merchant_name: Mapped[str] = mapped_column(String(255), default="")
+    # Dates read from the SOW. Stored so the schedule can be recomputed later
+    # and still be checked against the deadline the SOW actually committed to.
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    go_live_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     sow_documents: Mapped[list[SOWDocument]] = relationship(back_populates="project")
     tasks: Mapped[list[ProjectTask]] = relationship(back_populates="project")
