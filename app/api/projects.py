@@ -44,6 +44,7 @@ from app.planning.milestones import calibrate, calibration_summary, check_milest
 from app.planning.service import resolve_deadline, schedule_project
 from app.schemas.enums import ProjectStatus, ReviewStatus
 from app.taskmanager.base import BoardCase, BoardTask
+from app.taskmanager.sync import PUSHABLE, refresh_status, sync_tasks
 from app.taskmanager.trello import TrelloAdapter, TrelloError
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class ProjectSummary(BaseModel):
     status: str
     task_count: int
     assumption_count: int
+    board_url: str = ""
 
 
 class TaskView(BaseModel):
@@ -81,6 +83,7 @@ class TaskView(BaseModel):
     regeneration_count: int
     depends_on: list[str]
     external_ref: str
+    board_dirty: bool
 
 
 class UploadResponse(BaseModel):
@@ -154,6 +157,7 @@ def list_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
             status=p.status,
             task_count=db.query(ProjectTask).filter(ProjectTask.project_id == p.id).count(),
             assumption_count=db.query(Assumption).filter(Assumption.project_id == p.id).count(),
+            board_url=p.board_url,
         )
         for p in projects
     ]
@@ -184,6 +188,7 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
         regeneration_count=task.regeneration_count,
         depends_on=[d.title for d in task.depends_on],
         external_ref=task.external_ref,
+        board_dirty=task.board_dirty,
     )
 
 
@@ -746,12 +751,98 @@ def approve_project(project_id: str, db: Session = Depends(get_db)) -> dict:
     return {"project_id": project.id, "status": project.status}
 
 
-@router.post("/{project_id}/push")
-def push_to_task_manager(project_id: str, db: Session = Depends(get_db)) -> dict:
+def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> BoardTask:
+    """Everything a card says about one task.
+
+    Shared by both push routes. While this was written inline inside the
+    project-wide push, a task pushed on its own would have had to grow a second
+    copy of it, and the two would have drifted at the first change.
+    """
+    section = (
+        db.get(SOWSection, task.source_sow_section_id) if task.source_sow_section_id else None
+    )
+    artifacts = derived.get(task.requirement_id or "", {})
+    return BoardTask(
+        task_id=task.id,
+        title=task.title,
+        description=task.description,
+        team=task.team,
+        priority=task.priority,
+        status=task.status,
+        due_date=task.due_date,
+        assignee_role=task.assignee_role,
+        source_status=task.source_status,
+        validation_status=task.validation_status,
+        acceptance_criteria=artifacts.get("criteria", []),
+        assumed_test_fields=sorted(artifacts.get("assumed_fields", set())),
+        test_cases=artifacts.get("cases", []),
+        source_section=section.title if section else "",
+        source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
+        grounding_score=task.grounding_score,
+        depends_on_titles=[d.title for d in task.depends_on],
+    )
+
+
+def _sync(db: Session, project: Project, tasks: list[ProjectTask]):
+    """Build the cards for these tasks and put them on the project's board."""
+    derived = _artifacts_by_requirement(db, project.id)
+    board_tasks = {t.id: _board_task(db, t, derived) for t in tasks}
+    try:
+        return sync_tasks(db, project, tasks, board_tasks, TrelloAdapter())
+    except TrelloError as exc:
+        raise HTTPException(502, f"Trello push failed: {exc}") from exc
+
+
+@router.post("/{project_id}/tasks/{task_id}/push")
+def push_task(project_id: str, task_id: str, db: Session = Depends(get_db)) -> dict:
+    """Put one reviewed task on the board without waiting for the rest.
+
+    The task's own approval is the gate. Requiring the project-wide approval as
+    well would mean signing off the entire plan in order to push a single task,
+    which is the opposite of reviewing one at a time.
+    """
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    if project.status != ProjectStatus.APPROVED:
+    task = _get_task(db, project_id, task_id)
+
+    if task.review_status == ReviewStatus.REJECTED:
+        raise HTTPException(
+            409, "This task is rejected. Regenerate or edit it before putting it on the board."
+        )
+    if task.review_status not in PUSHABLE:
+        raise HTTPException(409, "Approve this task before pushing it to the board.")
+
+    result = _sync(db, project, [task])
+    return {
+        "task_id": task.id,
+        "card_id": task.external_ref,
+        "action": "updated" if task.id in result.updated else "created",
+        "board_url": result.board_url,
+        "warnings": result.warnings,
+        "project_status": project.status,
+    }
+
+
+@router.post("/{project_id}/push")
+def push_to_task_manager(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """Push everything reviewed that is not on the board yet, or has changed.
+
+    Kept alongside the per-task push rather than replaced by it: a PM who has
+    read the whole plan should not have to click thirty times to send it.
+
+    This route still needs the project-wide approval, and that is what lets it
+    carry tasks the PM never opened individually — approving the project is a
+    sign-off on the plan as a whole.
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if project.status not in {
+        ProjectStatus.APPROVED,
+        ProjectStatus.PARTIALLY_SYNCED,
+        ProjectStatus.SYNCED,
+    }:
         raise HTTPException(409, "Project must be approved by the PM before it can be pushed.")
 
     tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project_id).all()
@@ -767,51 +858,28 @@ def push_to_task_manager(project_id: str, db: Session = Depends(get_db)) -> dict
             f"{len(rejected)} task(s) are still rejected. Regenerate, edit, or "
             "remove them before pushing.",
         )
-    tasks = [t for t in tasks if t.review_status != ReviewStatus.REJECTED]
 
-    derived = _artifacts_by_requirement(db, project_id)
-    board_tasks = []
-    for task in tasks:
-        section = (
-            db.get(SOWSection, task.source_sow_section_id) if task.source_sow_section_id else None
-        )
-        artifacts = derived.get(task.requirement_id or "", {})
-        board_tasks.append(
-            BoardTask(
-                task_id=task.id,
-                title=task.title,
-                description=task.description,
-                team=task.team,
-                priority=task.priority,
-                status=task.status,
-                due_date=task.due_date,
-                assignee_role=task.assignee_role,
-                source_status=task.source_status,
-                validation_status=task.validation_status,
-                acceptance_criteria=artifacts.get("criteria", []),
-                assumed_test_fields=sorted(artifacts.get("assumed_fields", set())),
-                test_cases=artifacts.get("cases", []),
-                source_section=section.title if section else "",
-                source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
-                grounding_score=task.grounding_score,
-                depends_on_titles=[d.title for d in task.depends_on],
-            )
-        )
+    # Cards already on the board and unchanged are left alone. Re-sending every
+    # one of them costs about three Trello calls each and would overwrite
+    # nothing, so a second push after a single edit stays cheap.
+    outstanding = [t for t in tasks if not t.external_ref or t.board_dirty]
+    if not outstanding:
+        refresh_status(project)
+        db.commit()
+        return {
+            "board_url": project.board_url,
+            "cards_created": 0,
+            "cards_updated": 0,
+            "warnings": [],
+            "status": project.status,
+            "detail": "Every task is already on the board and up to date.",
+        }
 
-    try:
-        adapter = TrelloAdapter()
-        result = adapter.push_project(project.name, board_tasks)
-    except TrelloError as exc:
-        raise HTTPException(502, f"Trello push failed: {exc}") from exc
-
-    for task in tasks:
-        if external_id := result.created.get(task.id):
-            task.external_ref = external_id
-    project.status = ProjectStatus.SYNCED
-    db.commit()
-
+    result = _sync(db, project, outstanding)
     return {
         "board_url": result.board_url,
         "cards_created": len(result.created),
+        "cards_updated": len(result.updated),
+        "warnings": result.warnings,
         "status": project.status,
     }

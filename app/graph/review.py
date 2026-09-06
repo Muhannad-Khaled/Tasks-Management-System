@@ -52,6 +52,9 @@ def apply_edit(db: Session, task: ProjectTask, **fields) -> ProjectTask:
         if key in editable and value is not None:
             setattr(task, key, value)
     task.review_status = str(ReviewStatus.EDITED)
+    # The card on the board now shows wording nobody kept. Flagging it here is
+    # what lets a later push refresh this one card and leave the rest alone.
+    task.board_dirty = True
     task.grounding_score = None
     task.validation_status = "pending"
     db.query(ClaimRecord).filter(ClaimRecord.task_id == task.id).delete()
@@ -152,6 +155,7 @@ def regenerate_task(
     task.regeneration_count += 1
     task.review_status = str(ReviewStatus.PENDING)
     task.review_note = ""
+    task.board_dirty = True
     db.commit()
 
     # Re-ground the replacement so its score describes the new wording.

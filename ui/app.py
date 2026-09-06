@@ -16,6 +16,10 @@ import streamlit as st
 # binds IPv4 only, so every call paid ~2 seconds waiting out the failed
 # IPv6 attempt before falling back. Nine times slower, from a hostname.
 API_BASE = os.environ.get("API_BASE", "http://127.0.0.1:8000")
+# A clean run takes about a minute. The headroom is for Gemini answering 503
+# under load: the client retries with backoff and then tries the fallback
+# models, and that path is far slower than the work itself.
+API_TIMEOUT = float(os.environ.get("API_TIMEOUT", "180"))
 
 TEAM_COLORS = {"commercial": "🔵", "technical": "🟣", "operations": "🟠"}
 SOURCE_BADGES = {
@@ -29,7 +33,21 @@ st.set_page_config(page_title="SOW → Project", page_icon="📄", layout="wide"
 
 def api(method: str, path: str, **kwargs):
     try:
-        response = httpx.request(method, f"{API_BASE}{path}", timeout=180, **kwargs)
+        response = httpx.request(method, f"{API_BASE}{path}", timeout=API_TIMEOUT, **kwargs)
+    except httpx.TimeoutException:
+        # Caught before RequestError, which it subclasses. Running the two
+        # together reported "is uvicorn running?" for a server that was running
+        # perfectly well and simply had not answered yet — which sends whoever
+        # reads it hunting for a dead process instead of reading the log.
+        st.error(
+            f"**No answer within {API_TIMEOUT}s** — `{method} {path}`\n\n"
+            "The API is up; the request has just not finished. An upload retries "
+            "Gemini whenever it returns 503 (high demand) and works through the "
+            "fallback models, which can outlast this wait.\n\n"
+            "The work carries on server-side. Check `uploads/api.log` for what it "
+            "is doing, then reload: if it finished, the project is in the sidebar."
+        )
+        st.stop()
     except httpx.RequestError as exc:
         st.error(f"Cannot reach the API at {API_BASE}. Is uvicorn running?\n\n{exc}")
         st.stop()
@@ -228,6 +246,49 @@ VERDICT_LABELS = {
 }
 
 
+BOARD_BADGES = {
+    (False, False): "⬜ not on the board",
+    (True, False): "✅ on the board",
+    (True, True): "🔄 on the board, out of date",
+}
+
+
+def board_badge(task: dict) -> str:
+    return BOARD_BADGES[(bool(task["external_ref"]), bool(task["board_dirty"]))]
+
+
+def render_push_button(column, project_id: str, task: dict) -> None:
+    """Send this one task to Trello, whenever the PM is happy with it.
+
+    Waiting until all thirty tasks are reviewed means the team waits on the
+    slowest item in the plan. An approved task can go now, and the board fills
+    up at the pace the review actually runs at.
+    """
+    on_board = bool(task["external_ref"])
+    if on_board and not task["board_dirty"]:
+        column.button("✅ On board", key=f"pushed-{task['id']}", disabled=True)
+        return
+
+    ready = task["review_status"] in {"approved", "edited"}
+    if not column.button(
+        "🔄 Update card" if on_board else "Push to Trello",
+        key=f"push-{task['id']}",
+        disabled=not ready,
+        help=None if ready else "Approve this task before it can go to the board.",
+    ):
+        return
+
+    with st.spinner("Sending to Trello…"):
+        result = api("POST", f"/projects/{project_id}/tasks/{task['id']}/push")
+    if not result:
+        return
+    st.session_state[f"push-msg-{task['id']}"] = {
+        "message": f"Card {result['action']} on the board.",
+        "warnings": result["warnings"],
+    }
+    st.rerun()
+
+
 REVIEW_BADGES = {
     "pending": "⏳ awaiting review",
     "approved": "✅ approved",
@@ -244,16 +305,27 @@ def render_review_controls(project_id: str, task: dict) -> None:
     """
     st.divider()
     st.caption(f"Review: {REVIEW_BADGES.get(task['review_status'], task['review_status'])}")
+    st.caption(f"Board: {board_badge(task)}")
     if task["regeneration_count"]:
         st.caption(f"Regenerated {task['regeneration_count']} time(s)")
     if task["review_note"]:
         st.caption(f"Note: {task['review_note']}")
 
-    approve_col, reject_col = st.columns(2)
+    # Written by the push below, read after the rerun that follows it. Showing
+    # it before rerunning would put the message on screen and then throw it
+    # away in the same breath.
+    if flash := st.session_state.pop(f"push-msg-{task['id']}", None):
+        st.success(flash["message"])
+        for warning in flash["warnings"]:
+            st.warning(warning)
+
+    approve_col, push_col, reject_col = st.columns(3)
     if approve_col.button("Approve", key=f"ok-{task['id']}") and api(
         "POST", f"/projects/{project_id}/tasks/{task['id']}/approve"
     ):
         st.rerun()
+
+    render_push_button(push_col, project_id, task)
 
     with reject_col.popover("Reject & regenerate"):
         reason = st.text_area(
@@ -627,8 +699,9 @@ def render_project(project_id: str, projects: list[dict]) -> None:
 
     with approve_tab:
         st.caption(
-            "Nothing reaches Trello until a PM approves. Review the tasks, their "
-            "evidence, and the assumptions first."
+            "Nothing reaches Trello until a PM approves. Push tasks one at a time "
+            "from the Tasks tab as you finish reviewing them, or approve the plan "
+            "as a whole and send whatever is still outstanding from here."
         )
         counts = review["counts"]
         st.markdown(
@@ -646,9 +719,20 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                 f"{counts['pending']} task(s) have not been reviewed yet. You can still "
                 "approve the project, but they will go to the board unreviewed."
             )
+        on_board = [t for t in tasks if t["external_ref"]]
+        stale = [t for t in on_board if t["board_dirty"]]
+        outstanding = len(tasks) - len(on_board) + len(stale)
+        st.markdown(
+            f"**On the board:** {len(on_board)} of {len(tasks)} tasks"
+            + (f" · {len(stale)} out of date" if stale else "")
+        )
+
         if project["status"] == "synced":
-            st.success("Already pushed to Trello.")
-        approved = project["status"] in {"approved", "synced"}
+            st.success("Every task is on the board and up to date.")
+
+        # partially_synced counts as approved: the PM cannot lose the ability to
+        # push the rest just because they pushed one task first.
+        approved = project["status"] in {"approved", "partially_synced", "synced"}
         if not approved:
             if st.button("Approve project", type="primary") and api(
                 "POST", f"/projects/{project_id}/approve"
@@ -657,12 +741,23 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                 st.rerun()
         else:
             st.success("Approved by PM.")
-            if st.button("Push to Trello", type="primary"):
-                with st.spinner("Creating board and cards…"):
+            if st.button(
+                f"Push remaining to Trello ({outstanding})",
+                type="primary",
+                disabled=not outstanding,
+                help=None if outstanding else "Nothing is waiting to be sent.",
+            ):
+                with st.spinner("Sending to Trello…"):
                     result = api("POST", f"/projects/{project_id}/push")
                 if result:
-                    st.success(f"Created {result['cards_created']} cards.")
-                    st.link_button("Open Trello board", result["board_url"])
+                    st.success(
+                        f"{result['cards_created']} card(s) created, "
+                        f"{result['cards_updated']} updated."
+                    )
+                    for warning in result["warnings"]:
+                        st.warning(warning)
+            if project.get("board_url"):
+                st.link_button("Open Trello board", project["board_url"])
 
 
 def main() -> None:

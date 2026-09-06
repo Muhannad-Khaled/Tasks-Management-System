@@ -61,4 +61,7 @@ class ProjectStatus(StrEnum):
     EXTRACTING = "extracting"
     AWAITING_APPROVAL = "awaiting_approval"
     APPROVED = "approved"
+    # Some tasks are on the board and some are not. The PM pushes task by task,
+    # so this is the normal state for most of a review, not an error.
+    PARTIALLY_SYNCED = "partially_synced"
     SYNCED = "synced"

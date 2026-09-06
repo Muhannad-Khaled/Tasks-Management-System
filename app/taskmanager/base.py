@@ -154,15 +154,14 @@ class BoardTask:
         return "\n\n---\n\n".join(parts)
 
 
-@dataclass
-class PushResult:
-    board_id: str
-    board_url: str
-    created: dict[str, str] = field(default_factory=dict)  # task_id -> external id
-
-
 class TaskManagerInterface(ABC):
-    """Implemented by TrelloAdapter and (in M7) PlaneAdapter."""
+    """Implemented by TrelloAdapter and (in M7) PlaneAdapter.
+
+    There is deliberately no push_project() that creates a board and fills it in
+    one go. The PM pushes one task at a time, so the board has to outlive any
+    single push; a method that always created one made every push after the
+    first land on a board of its own.
+    """
 
     name: str
 
@@ -174,7 +173,24 @@ class TaskManagerInterface(ABC):
     def push_tasks(self, board_id: str, tasks: list[BoardTask]) -> dict[str, str]:
         """Create one card/issue per task; return task_id -> external id."""
 
-    def push_project(self, project_name: str, tasks: list[BoardTask]) -> PushResult:
-        board_id, board_url = self.create_board(project_name)
-        created = self.push_tasks(board_id, tasks)
-        return PushResult(board_id=board_id, board_url=board_url, created=created)
+    def expected_location(self, task: BoardTask) -> str:
+        """The name of the list/column the plan puts this task's card in."""
+        return ""
+
+    def card_locations(self, board_id: str) -> dict[str, str]:
+        """Where each card actually sits now: external id -> list name.
+
+        Returning nothing is a valid answer for a backend that cannot report
+        this. Drift then goes unnoticed, which is better than reporting it
+        wrongly against a board whose shape we cannot read.
+        """
+        return {}
+
+    @abstractmethod
+    def update_task(self, board_id: str, external_id: str, task: BoardTask) -> bool:
+        """Bring an existing card/issue back in line with the task.
+
+        Returns False when the item is gone from the board — somebody deleted
+        it by hand — so the caller can create it again rather than reporting a
+        success that left nothing behind.
+        """

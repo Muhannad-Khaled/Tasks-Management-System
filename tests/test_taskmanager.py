@@ -11,7 +11,16 @@ import pytest
 
 from app.schemas.roles import TEAM_ROLES
 from app.taskmanager.base import BoardCase, BoardTask
-from app.taskmanager.labels import LABEL_COLORS, ROLE_PREFIX, label_color, role_label
+from app.taskmanager.labels import (
+    FALLBACK_COLOR,
+    LABEL_COLORS,
+    ROLE_COLOR,
+    ROLE_PREFIX,
+    TRELLO_LABEL_COLORS,
+    label_color,
+    role_label,
+)
+from app.taskmanager.trello import TrelloAdapter, TrelloError
 
 
 def _task(**kwargs) -> BoardTask:
@@ -255,3 +264,157 @@ def test_a_case_with_no_expected_result_still_produces_a_usable_line():
 def test_a_task_with_no_tests_gets_no_test_checklist():
     names = [name for name, _ in _task(acceptance_criteria=["a"]).checklists()]
     assert names == ["Acceptance criteria"]
+
+
+class RecordingTrello(TrelloAdapter):
+    """A TrelloAdapter whose HTTP layer is replaced by a script and a log.
+
+    The checklist rules below are the ones worth pinning down: they decide
+    whether a PM fixing a typo silently destroys a QA engineer's record of what
+    has been verified.
+    """
+
+    def __init__(self, checklists):
+        self.api_key, self.token = "k", "t"
+        self.http = None
+        self._checklists = checklists
+        self.calls: list[tuple[str, str]] = []
+
+    def _request(self, method, path, **params):
+        self.calls.append((method, path))
+        if path.endswith("/checklists") and method == "GET":
+            return self._checklists
+        if path.endswith("/labels") and method == "GET":
+            return []
+        if path == "/checklists":
+            return {"id": "new-checklist"}
+        return {"id": "x"}
+
+
+def _checklist(name: str, *items: str) -> dict:
+    """A checklist as Trello returns it, positions spaced out the way it spaces them."""
+    return {
+        "id": f"cl-{name}",
+        "name": name,
+        "checkItems": [
+            {"id": f"ci-{item}", "name": item, "pos": i * 16384}
+            for i, item in enumerate(items, start=1)
+        ],
+    }
+
+
+def test_an_unchanged_checklist_is_left_alone():
+    task = _task(acceptance_criteria=["Points accrue", "Receipt shows the balance"])
+    trello = RecordingTrello([_checklist("Acceptance criteria", *task.checklists()[0][1])])
+
+    trello._sync_checklists("card-1", task)
+
+    assert not [c for c in trello.calls if c[0] != "GET"]
+
+
+def test_adding_a_criterion_touches_only_the_new_line():
+    task = _task(acceptance_criteria=["Points accrue", "Receipt shows the balance"])
+    first = task.checklists()[0][1][0]
+    trello = RecordingTrello([_checklist("Acceptance criteria", first)])
+
+    trello._sync_checklists("card-1", task)
+
+    # The checklist is never deleted, so a tick on the first criterion survives
+    # somebody adding a second one.
+    assert not [c for c in trello.calls if c[0] == "DELETE"]
+    assert ("POST", "/checklists/cl-Acceptance criteria/checkItems") in trello.calls
+
+
+def test_removing_a_criterion_deletes_that_item_alone():
+    task = _task(acceptance_criteria=["Points accrue"])
+    kept = task.checklists()[0][1][0]
+    trello = RecordingTrello([_checklist("Acceptance criteria", kept, "A line nobody kept")])
+
+    trello._sync_checklists("card-1", task)
+
+    assert ("DELETE", "/cards/card-1/checkItem/ci-A line nobody kept") in trello.calls
+    assert not [c for c in trello.calls if c[1] == "/checklists/cl-Acceptance criteria"]
+
+
+def test_reordering_moves_items_rather_than_recreating_them():
+    task = _task(acceptance_criteria=["First", "Second"])
+    first, second = task.checklists()[0][1]
+    trello = RecordingTrello([_checklist("Acceptance criteria", second, first)])
+
+    trello._sync_checklists("card-1", task)
+
+    # A PUT keeps the item's state, so each tick moves with the line it is on.
+    assert [c for c in trello.calls if c[0] == "PUT"] == [
+        ("PUT", f"/cards/card-1/checkItem/ci-{first}"),
+        ("PUT", f"/cards/card-1/checkItem/ci-{second}"),
+    ]
+    assert not [c for c in trello.calls if c[0] == "DELETE"]
+
+
+def test_a_checklist_the_task_no_longer_has_is_removed():
+    task = _task(acceptance_criteria=["Points accrue"])
+    trello = RecordingTrello(
+        [
+            _checklist("Acceptance criteria", *_task(acceptance_criteria=["Points accrue"]).checklists()[0][1]),
+            _checklist("Test cases", "An old case nobody kept"),
+        ]
+    )
+
+    trello._sync_checklists("card-1", task)
+
+    # Leaving it would let the card keep asserting something the plan dropped.
+    assert ("DELETE", "/checklists/cl-Test cases") in trello.calls
+
+
+def test_a_deleted_card_reports_itself_gone_rather_than_raising():
+    class Gone(RecordingTrello):
+        def _request(self, method, path, **params):
+            if method == "PUT":
+                raise TrelloError("PUT /cards/x -> 404: not found", 404)
+            return super()._request(method, path, **params)
+
+    assert Gone([]).update_task("board-1", "card-1", _task()) is False
+
+
+def test_a_real_trello_failure_is_not_mistaken_for_a_deleted_card():
+    class Broken(RecordingTrello):
+        def _request(self, method, path, **params):
+            if method == "PUT":
+                raise TrelloError("PUT /cards/x -> 500: server error", 500)
+            return super()._request(method, path, **params)
+
+    # Swallowing this as "the card is gone" would create a duplicate card every
+    # time Trello had a bad minute.
+    with pytest.raises(TrelloError):
+        Broken([]).update_task("board-1", "card-1", _task())
+
+
+def test_every_label_colour_is_one_trello_accepts():
+    """A colour Trello rejects fails the whole push, not just its own label.
+
+    Labels are created before any card, so `light-gray` — which is not in
+    Trello's set — turned an edited task into a 400 that stopped every card
+    from going up. Editing a task sets validation_status to "pending", which is
+    exactly how the untested NOT-CHECKED label got reached for the first time.
+    """
+    invalid = {
+        name: color
+        for name, color in LABEL_COLORS.items()
+        if color not in TRELLO_LABEL_COLORS
+    }
+    assert not invalid, f"Trello will reject these: {invalid}"
+    assert {ROLE_COLOR, FALLBACK_COLOR} <= TRELLO_LABEL_COLORS
+
+
+def test_an_edited_task_gets_a_pushable_colour_for_every_label():
+    """The exact path that failed: edit a task, then push it."""
+    task = _task()
+    task.validation_status = "pending"  # what apply_edit leaves behind
+    task.source_status = "something the table has never seen"
+
+    colours = [label_color(name) for name in task.labels()]
+
+    assert colours, "a task with no labels would hide its team and priority"
+    assert all(c in TRELLO_LABEL_COLORS for c in colours), dict(
+        zip(task.labels(), colours, strict=True)
+    )

@@ -57,6 +57,13 @@ class Project(Base):
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     go_live_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # The board this project pushes to, remembered so every later push lands on
+    # it. Without these the adapter created a fresh board on each push, which
+    # made pushing one task at a time impossible: the PM would have ended up
+    # with one board per task.
+    board_id: Mapped[str] = mapped_column(String(255), default="")
+    board_url: Mapped[str] = mapped_column(String(512), default="")
+
     # Deleting a project must take its children with it. Without the cascade,
     # SQLAlchemy tries to null out project_id instead and the delete fails on
     # the NOT NULL constraint — which is what happens whenever a run is
@@ -174,6 +181,10 @@ class ProjectTask(Base):
     grounding_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     validation_status: Mapped[str] = mapped_column(String(32), default="pending")
     external_ref: Mapped[str] = mapped_column(String(255), default="")  # Trello card / Plane issue
+    # Set when a task that is already on the board changes, so pushing the rest
+    # of the project updates the cards that moved on and leaves the others
+    # alone. Re-sending every card each time costs ~3 Trello calls per card.
+    board_dirty: Mapped[bool] = mapped_column(Boolean, default=False)
     # PM review, tracked per task so rejecting one item regenerates only that
     # item rather than discarding the whole plan (brief section 23).
     review_status: Mapped[str] = mapped_column(String(16), default="pending")
