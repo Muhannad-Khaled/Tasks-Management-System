@@ -430,6 +430,36 @@ def list_assumptions(project_id: str, db: Session = Depends(get_db)) -> list[dic
     ]
 
 
+@router.get("/{project_id}/evidence")
+def get_all_evidence(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """Every chunk this project's tasks cite, in one response.
+
+    The task list showed evidence per task, which meant one request per cited
+    chunk. Streamlit renders the body of a collapsed expander too, so those ran
+    on every page render whether or not anyone looked at them.
+    """
+    tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project_id).all()
+    keys = {k for t in tasks for k in t.source_chunk_keys.split(",") if k}
+    if not keys:
+        return {}
+    chunks = db.query(SOWChunk).filter(SOWChunk.chunk_key.in_(keys)).all()
+    sections = {
+        s.id: s.title
+        for s in db.query(SOWSection).filter(
+            SOWSection.id.in_({c.section_id for c in chunks})
+        )
+    }
+    return {
+        c.chunk_key: {
+            "chunk_key": c.chunk_key,
+            "text": c.text,
+            "page": c.page,
+            "section": sections.get(c.section_id),
+        }
+        for c in chunks
+    }
+
+
 @router.get("/{project_id}/evidence/{chunk_key}")
 def get_evidence(project_id: str, chunk_key: str, db: Session = Depends(get_db)) -> dict:
     """Resolve a citation back to the exact SOW text it points at."""

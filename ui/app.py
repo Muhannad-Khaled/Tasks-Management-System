@@ -12,7 +12,10 @@ import os
 import httpx
 import streamlit as st
 
-API_BASE = os.environ.get("API_BASE", "http://localhost:8000")
+# 127.0.0.1, not localhost: localhost resolves to ::1 first and uvicorn
+# binds IPv4 only, so every call paid ~2 seconds waiting out the failed
+# IPv6 attempt before falling back. Nine times slower, from a hostname.
+API_BASE = os.environ.get("API_BASE", "http://127.0.0.1:8000")
 
 TEAM_COLORS = {"commercial": "🔵", "technical": "🟣", "operations": "🟠"}
 SOURCE_BADGES = {
@@ -516,6 +519,8 @@ def render_project(project_id: str, projects: list[dict]) -> None:
     right.metric("Assumptions", project["assumption_count"])
 
     tasks = api("GET", f"/projects/{project_id}/tasks") or []
+    # Fetched once for the whole page rather than once per citation.
+    evidence_by_key = api("GET", f"/projects/{project_id}/evidence") or {}
     assumptions = api("GET", f"/projects/{project_id}/assumptions") or []
 
     review = api("GET", f"/projects/{project_id}/review") or {"counts": {}, "ready": False}
@@ -587,7 +592,7 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                     if task["source_section"]:
                         st.caption(f"SOW section: {task['source_section']}")
                     for key in task["source_chunk_keys"]:
-                        evidence = api("GET", f"/projects/{project_id}/evidence/{key}")
+                        evidence = evidence_by_key.get(key)
                         if evidence:
                             page = f" · page {evidence['page']}" if evidence["page"] else ""
                             st.info(f"**{key}**{page}\n\n{evidence['text']}")

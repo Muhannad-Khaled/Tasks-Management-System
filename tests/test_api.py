@@ -241,3 +241,34 @@ def test_calibration_reports_each_agreed_window_separately(client, seeded_projec
     assert integration["after"] == "Contract"
     assert integration["allowed_days"] > integration["planned_days"]
     assert integration["unaccounted_days"] > 0
+
+
+def test_all_evidence_comes_back_in_one_call(client, seeded_project):
+    # The task list fetched one chunk per citation, and Streamlit renders the
+    # body of a collapsed expander too, so those ran on every page render.
+    tasks = client.get(f"/projects/{seeded_project.id}/tasks").json()
+    cited = {k for t in tasks for k in t["source_chunk_keys"]}
+
+    bundle = client.get(f"/projects/{seeded_project.id}/evidence").json()
+
+    assert set(bundle) == cited
+    assert all(v["text"].strip() for v in bundle.values())
+
+
+def test_the_bundle_matches_what_the_single_lookup_returns(client, seeded_project):
+    bundle = client.get(f"/projects/{seeded_project.id}/evidence").json()
+    key = next(iter(bundle))
+
+    single = client.get(f"/projects/{seeded_project.id}/evidence/{key}").json()
+
+    assert bundle[key] == single
+
+
+def test_a_project_citing_nothing_gets_an_empty_bundle(client, db):
+    from app.models import Project
+
+    empty = Project(name="No citations", status=ProjectStatus.INGESTING)
+    db.add(empty)
+    db.commit()
+
+    assert client.get(f"/projects/{empty.id}/evidence").json() == {}
