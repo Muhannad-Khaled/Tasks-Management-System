@@ -10,7 +10,7 @@ from datetime import date
 import pytest
 
 from app.schemas.roles import TEAM_ROLES
-from app.taskmanager.base import BoardCase, BoardTask
+from app.taskmanager.base import BoardCase, BoardTask, CardSnapshot
 from app.taskmanager.labels import (
     FALLBACK_COLOR,
     LABEL_COLORS,
@@ -446,3 +446,54 @@ def test_credentials_never_reach_the_url():
     assert seen["url"].startswith(API)
     assert "SHOULD-NOT-APPEAR" not in seen["url"], seen["url"]
     assert "KEY-SHOULD-NOT-APPEAR" in seen["auth"]
+
+
+def test_the_adapter_reads_a_board_back_faithfully():
+    """The real snapshot parsing, which only a live run had ever covered.
+
+    Everything downstream — moved, edited, archived, deleted — is decided from
+    these four fields, so a wrong one here is wrong everywhere at once.
+    """
+    import httpx
+
+    from app.taskmanager.trello import TrelloAdapter
+
+    lists = [{"id": "l1", "name": "Technical"}, {"id": "l2", "name": "Done"}]
+    cards = [
+        {"id": "c1", "idList": "l1", "name": "Build it", "desc": "body", "closed": False},
+        {"id": "c2", "idList": "l2", "name": "Old work", "desc": "", "closed": True},
+        {"id": "c3", "idList": "gone", "name": "Homeless", "desc": "x", "closed": False},
+    ]
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=lists if request.url.path.endswith("/lists") else cards)
+
+    adapter = TrelloAdapter(api_key="k", token="t")
+    adapter.http = httpx.Client(transport=httpx.MockTransport(respond))
+    snapshots = adapter.card_snapshots("b1")
+
+    assert snapshots["c1"] == CardSnapshot("Technical", "Build it", "body", archived=False)
+    # Archived is the fact that matters; it is not a deletion and not a move.
+    assert snapshots["c2"].archived is True
+    # A list the board no longer has must not look like a real location, or
+    # every card in it would report itself moved.
+    assert snapshots["c3"].location == ""
+
+
+def test_the_adapter_asks_for_archived_cards_too():
+    """/cards hides them, and an archived card would then read as deleted."""
+    import httpx
+
+    from app.taskmanager.trello import TrelloAdapter
+
+    asked: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        return httpx.Response(200, json=[])
+
+    adapter = TrelloAdapter(api_key="k", token="t")
+    adapter.http = httpx.Client(transport=httpx.MockTransport(respond))
+    adapter.card_snapshots("b1")
+
+    assert any(path.endswith("/cards/all") for path in asked), asked

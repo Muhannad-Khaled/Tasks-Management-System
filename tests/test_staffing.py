@@ -107,9 +107,13 @@ def test_a_choice_the_pm_already_made_is_never_overwritten(db):
     db.commit()
 
     autostaff(db, project.id)
+    # Committed before reading back. autostaff leaves that to its caller, and
+    # refresh() on an uncommitted session discards the pending write — which
+    # made this assertion pass even with the guard deleted.
+    db.commit()
 
-    db.refresh(role)
     assert role.person_id == chosen.id
+    assert db.get(ProjectRole, role.id).person_id == chosen.id
 
 
 def test_somebody_who_left_is_not_staffed(db):

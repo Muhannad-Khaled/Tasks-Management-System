@@ -545,3 +545,21 @@ def test_an_archived_card_is_not_also_called_moved(client, project, board):
 
     kinds = [row["kind"] for row in client.get(f"/projects/{project.id}/drift").json()]
     assert kinds == ["archived"], kinds
+
+
+def test_a_regenerated_task_marks_its_card_out_of_date(client, project, board):
+    """Its wording changed, so the card no longer describes it either."""
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+
+    listed = {t["id"]: t for t in client.get(f"/projects/{project.id}/tasks").json()}
+    assert listed[task["id"]]["board_dirty"] is False
+
+    client.post(
+        f"/projects/{project.id}/tasks/{task['id']}/reject",
+        json={"reason": "wrong scope", "regenerate": True},
+    )
+
+    after = {t["id"]: t for t in client.get(f"/projects/{project.id}/tasks").json()}
+    assert after[task["id"]]["board_dirty"] is True
