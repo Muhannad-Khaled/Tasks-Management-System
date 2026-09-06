@@ -5,6 +5,8 @@ Before this, every push built a board of its own — which meant pushing three
 tasks separately gave you three boards, each holding one card.
 """
 
+import contextlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,7 +16,8 @@ from app.ingestion.parser import parse_document
 from app.main import app
 from app.models import Project, ProjectTask
 from app.schemas.enums import ProjectStatus
-from app.taskmanager.base import BoardTask, TaskManagerInterface
+from app.taskmanager import watch
+from app.taskmanager.base import BoardTask, CardSnapshot, TaskManagerInterface
 from tests.factories import CORPUS, StubLLM
 
 
@@ -30,6 +33,10 @@ class FakeBoard(TaskManagerInterface):
         # Where each card sits. A real board lets a person drag a card into
         # another list, and nothing in the push path may quietly undo that.
         self.lists: dict[str, str] = {}
+        # Titles a person changed on the board, which is not the same as the
+        # plan changing: the card differs from what was last written to it.
+        self.edits: dict[str, str] = {}
+        self.archived: set[str] = set()
         self._counter = 0
 
     def create_board(self, project_name: str) -> tuple[str, str]:
@@ -49,8 +56,36 @@ class FakeBoard(TaskManagerInterface):
     def expected_location(self, task: BoardTask) -> str:
         return task.team.capitalize()
 
-    def card_locations(self, board_id: str) -> dict[str, str]:
-        return dict(self.lists)
+    def card_snapshots(self, board_id: str) -> dict[str, CardSnapshot]:
+        return {
+            card_id: CardSnapshot(
+                location=self.lists[card_id],
+                title=self.edits.get(card_id, task.title),
+                description=task.rendered_description(),
+                archived=card_id in self.archived,
+            )
+            for card_id, task in self.cards.items()
+        }
+
+    # ---- what a person does to a board, by hand -------------------------
+    def rewrite(self, card_id: str, title: str) -> None:
+        """Somebody retitled the card in Trello."""
+        self.edits[card_id] = title
+
+    def delete(self, card_id: str) -> None:
+        """Gone for good, the way Trello's second, deliberate step leaves it."""
+        self.cards.pop(card_id, None)
+        self.lists.pop(card_id, None)
+
+    def archive(self, card_id: str) -> None:
+        """What Trello's menu actually does, and what an accident usually is."""
+        self.archived.add(card_id)
+
+    def restore_card(self, board_id: str, external_id: str) -> bool:
+        if external_id not in self.cards:
+            return False  # deleted, not archived
+        self.archived.discard(external_id)
+        return True
 
     def update_task(self, board_id: str, external_id: str, task: BoardTask) -> bool:
         if external_id not in self.cards:
@@ -287,3 +322,226 @@ def test_cards_are_created_where_drift_is_measured_from():
         task_id="t", title="t", description="", team="marketing", priority="high", status="backlog"
     )
     assert adapter.expected_location(unknown) == "Backlog"
+
+
+def _card_of(board, task_id: str, client, project) -> str:
+    """The card id a task was pushed to."""
+    listed = {t["id"]: t for t in client.get(f"/projects/{project.id}/tasks").json()}
+    return listed[task_id]["external_ref"]
+
+
+def test_a_card_someone_rewrote_is_reported(client, project, board):
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+
+    card_id = next(iter(board.cards))
+    board.rewrite(card_id, "Somebody typed this straight into Trello")
+
+    warnings = push(client, project, task).json()["warnings"]
+
+    assert any("edited on the board" in w for w in warnings), warnings
+
+
+def test_a_card_matching_what_was_pushed_is_not_called_edited(client, project, board):
+    """The fingerprint has to survive a push that changed nothing."""
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+
+    warnings = push(client, project, task).json()["warnings"]
+
+    assert not [w for w in warnings if "edited" in w], warnings
+
+
+def test_a_deleted_card_is_reported_and_not_recreated(client, project, board):
+    """Recreating it would undo a decision somebody made on purpose."""
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    assert len(board.cards) == 1
+
+    board.delete(next(iter(board.cards)))
+    response = push(client, project, task)
+
+    assert response.status_code == 200
+    assert any("not recreated" in w for w in response.json()["warnings"])
+    assert board.cards == {}, "the card was put back without being asked"
+
+
+def test_a_difference_is_reported_once_not_every_push(client, project, board):
+    """An alert that repeats every cycle is an alert people mute."""
+    first, second, _ = tasks_of(client, project)
+    for task in (first, second):
+        approve(client, project, task)
+    push(client, project, first)
+
+    card_id = next(iter(board.lists))
+    board.lists[card_id] = "Done"
+
+    said_first = [w for w in push(client, project, first).json()["warnings"] if "Done" in w]
+    said_again = [w for w in push(client, project, second).json()["warnings"] if "Done" in w]
+
+    assert said_first, "the move was never reported"
+    assert not said_again, "the same unresolved move was reported twice"
+
+
+def test_a_difference_that_is_settled_and_returns_is_news_again(client, project, board):
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    card_id = next(iter(board.lists))
+    planned = board.lists[card_id]
+
+    board.lists[card_id] = "Done"
+    push(client, project, task)          # reported
+    board.lists[card_id] = planned       # somebody put it back
+    push(client, project, task)          # settled
+    board.lists[card_id] = "Done"        # and moved again
+
+    warnings = push(client, project, task).json()["warnings"]
+
+    assert any("Done" in w for w in warnings), warnings
+
+
+def test_open_drift_is_listed_for_the_ui(client, project, board):
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    board.lists[next(iter(board.lists))] = "Done"
+    push(client, project, task)
+
+    listed = client.get(f"/projects/{project.id}/drift").json()
+
+    assert [row["kind"] for row in listed] == ["moved"]
+    assert listed[0]["task_id"] == task["id"]
+    assert listed[0]["notified"] is False  # no webhook configured in tests
+
+
+def test_an_unreadable_board_reports_nothing_rather_than_everything(client, project, board):
+    """An empty read is not proof that every card was deleted."""
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+
+    board.card_snapshots = lambda board_id: {}
+    warnings = push(client, project, task).json()["warnings"]
+
+    assert not [w for w in warnings if "no longer on the board" in w], warnings
+
+
+async def _run_watcher_until(calls: list, wanted: int, timeout: float = 5.0) -> None:
+    """Drive the watcher until it has run `wanted` times, then stop it.
+
+    Waiting a fixed number of milliseconds and hoping made the test flaky: the
+    check runs in a worker thread, so how many cycles fit in 50ms is a property
+    of the machine, not of the code being tested.
+    """
+    import asyncio
+
+    task = asyncio.create_task(watch.watch_boards(interval_seconds=0))
+    deadline = asyncio.get_running_loop().time() + timeout
+    while len(calls) < wanted and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+def test_the_watcher_actually_runs_on_its_timer():
+    """The one thing this feature cannot verify by being used: it runs unattended."""
+    import asyncio
+
+    calls = []
+
+    async def drive():
+        original = watch.check_all_boards
+        watch.check_all_boards = lambda: calls.append(1) or watch.WatchReport()
+        try:
+            await _run_watcher_until(calls, wanted=1)
+        finally:
+            watch.check_all_boards = original
+
+    asyncio.run(drive())
+    assert calls, "the watcher never called the check"
+
+
+def test_the_watcher_survives_a_check_that_raises():
+    """A watcher that dies on one bad response stops watching, silently."""
+    import asyncio
+
+    calls = []
+
+    def explode():
+        calls.append(1)
+        raise RuntimeError("Trello fell over")
+
+    async def drive():
+        original = watch.check_all_boards
+        watch.check_all_boards = explode
+        try:
+            await _run_watcher_until(calls, wanted=3)
+        finally:
+            watch.check_all_boards = original
+
+    asyncio.run(drive())
+    assert len(calls) >= 3, f"the watcher stopped after {len(calls)} failure(s)"
+
+
+def test_an_archived_card_is_not_reported_as_deleted(client, project, board):
+    """Telling the PM to rebuild would throw away comments and ticks for nothing."""
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    board.archive(next(iter(board.cards)))
+
+    push(client, project, task)
+    listed = client.get(f"/projects/{project.id}/drift").json()
+
+    assert [row["kind"] for row in listed] == ["archived"]
+    assert "cannot be brought back" not in listed[0]["detail"]
+
+
+def test_an_archived_card_can_be_put_back(client, project, board):
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    card_id = next(iter(board.cards))
+    board.archive(card_id)
+    push(client, project, task)
+
+    response = client.post(f"/projects/{project.id}/tasks/{task['id']}/restore-card")
+
+    assert response.status_code == 200
+    assert card_id not in board.archived
+    # And the same card, not a replacement: whatever it held is still on it.
+    assert card_id in board.cards
+    assert client.get(f"/projects/{project.id}/drift").json() == []
+
+
+def test_restoring_a_deleted_card_says_it_cannot_be_done(client, project, board):
+    """A success message that put nothing back would be the worst answer here."""
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    board.delete(next(iter(board.cards)))
+
+    response = client.post(f"/projects/{project.id}/tasks/{task['id']}/restore-card")
+
+    assert response.status_code == 409
+    assert "deleted, not archived" in response.json()["detail"]
+
+
+def test_an_archived_card_is_not_also_called_moved(client, project, board):
+    """Archived cards sit in no list; reporting a move as well is noise."""
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    card_id = next(iter(board.cards))
+    board.archive(card_id)
+    board.lists[card_id] = "Done"
+
+    push(client, project, task)
+
+    kinds = [row["kind"] for row in client.get(f"/projects/{project.id}/drift").json()]
+    assert kinds == ["archived"], kinds

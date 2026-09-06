@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -27,6 +27,8 @@ from app.models import (
     ClaimRecord,
     ClarificationQuestion,
     LLMRequest,
+    Person,
+    PersonRole,
     Project,
     ProjectDetail,
     ProjectMilestone,
@@ -43,12 +45,19 @@ from app.models import (
 from app.planning.milestones import calibrate, calibration_summary, check_milestones
 from app.planning.service import resolve_deadline, schedule_project
 from app.schemas.enums import ProjectStatus, ReviewStatus
-from app.taskmanager.base import BoardCase, BoardTask
+from app.schemas.roles import TEAM_ROLES
+from app.taskmanager.cards import _artifacts_by_requirement, _board_task
+from app.taskmanager.drift import open_drift
 from app.taskmanager.sync import PUSHABLE, refresh_status, sync_tasks
 from app.taskmanager.trello import TrelloAdapter, TrelloError
+from app.taskmanager.watch import check_project
+from app.validation.pipeline import validate_staffing
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
+# Separate prefix: the directory belongs to the company, not to any one
+# project, and hanging it under /projects/{id} would imply otherwise.
+people_router = APIRouter(prefix="/people", tags=["people"])
 
 ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt"}
 
@@ -198,46 +207,166 @@ def list_tasks(project_id: str, db: Session = Depends(get_db)) -> list[TaskView]
     return [_task_view(db, t) for t in tasks]
 
 
-def _artifacts_by_requirement(db: Session, project_id: str) -> dict[str, dict]:
-    """Acceptance-criteria counts and assumed test fields, keyed by requirement.
+class PersonIn(BaseModel):
+    name: str
+    # What they can be put on. Empty is fine — a person with no roles simply
+    # never gets staffed automatically, which is better than a wrong guess.
+    roles: list[str] = []
 
-    A task inherits these through the requirement it implements, which is the
-    only link between a unit of work and the tests that will judge it.
+
+class RoleHolder(BaseModel):
+    # None clears it: a role with nobody on it is a normal state, and saying so
+    # has to be as easy as saying who.
+    person_id: str | None = None
+
+
+@people_router.get("/roles")
+def known_roles() -> list[dict]:
+    """Every role the platform recognises, so a person can be marked for one.
+
+    Served rather than duplicated in the UI: these are the same titles the
+    extraction normalises project roles to, and two lists that could disagree
+    would silently stop automatic staffing from ever matching.
     """
-    stories = (
-        db.query(UserStory)
-        .filter(UserStory.project_id == project_id, UserStory.requirement_id.isnot(None))
-        .all()
-    )
-    out: dict[str, dict] = {}
-    for story in stories:
-        entry = out.setdefault(
-            story.requirement_id, {"criteria": [], "assumed_fields": set(), "cases": []}
-        )
-        entry["criteria"].extend(c.text for c in story.acceptance_criteria)
-        for case in story.test_cases:
-            assumed = [f for f in case.assumed_fields.split(",") if f]
-            entry["assumed_fields"].update(assumed)
-            entry["cases"].append(
-                BoardCase(
-                    title=case.title,
-                    expected_result=case.expected_result,
-                    rests_on_assumption=case.rests_on_assumption,
-                    assumed_fields=assumed,
-                )
-            )
-    return out
+    return [{"title": r.title, "team": str(r.team)} for r in TEAM_ROLES]
+
+
+@people_router.get("")
+def list_people(db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.query(Person).order_by(Person.active.desc(), Person.name).all()
+    return [
+        {"id": p.id, "name": p.name, "active": p.active, "roles": p.role_titles}
+        for p in rows
+    ]
+
+
+@people_router.post("")
+def add_person(body: PersonIn, db: Session = Depends(get_db)) -> dict:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "A person needs a name.")
+
+    existing = db.query(Person).filter(Person.name == name).first()
+    if existing:
+        # Re-adding somebody who left is how they come back, rather than a
+        # duplicate row that splits their history in two.
+        if existing.active:
+            raise HTTPException(409, f"{name} is already in the directory.")
+        existing.active = True
+        _set_capabilities(db, existing, body.roles)
+        db.commit()
+        return {"id": existing.id, "name": existing.name, "active": True}
+
+    person = Person(name=name)
+    db.add(person)
+    db.flush()
+    _set_capabilities(db, person, body.roles)
+    db.commit()
+    return {
+        "id": person.id,
+        "name": person.name,
+        "active": person.active,
+        "roles": person.role_titles,
+    }
+
+
+def _set_capabilities(db: Session, person: Person, titles: list[str]) -> None:
+    """Replace what a person can do with exactly what was asked for.
+
+    Unknown titles are dropped rather than stored: a role the roster does not
+    know can never match a project role, so keeping it would show the PM a
+    capability that does nothing.
+    """
+    known = {r.title for r in TEAM_ROLES}
+    wanted = {t for t in titles if t in known}
+    db.query(PersonRole).filter(PersonRole.person_id == person.id).delete()
+    for title in sorted(wanted):
+        db.add(PersonRole(person_id=person.id, role_title=title))
+
+
+@people_router.patch("/{person_id}")
+def set_person_roles(person_id: str, body: PersonIn, db: Session = Depends(get_db)) -> dict:
+    """Change what somebody can be put on.
+
+    Existing projects are left alone. Staffing runs once, when a plan is built,
+    so that a plan the PM has already reviewed does not quietly restaff itself
+    underneath them.
+    """
+    person = db.get(Person, person_id)
+    if not person:
+        raise HTTPException(404, "Person not found")
+    _set_capabilities(db, person, body.roles)
+    db.commit()
+    return {"id": person.id, "name": person.name, "roles": person.role_titles}
+
+
+@people_router.delete("/{person_id}")
+def deactivate_person(person_id: str, db: Session = Depends(get_db)) -> dict:
+    """Retire somebody without erasing what they were assigned.
+
+    Deleting the row would strip their name off plans that already ran, which
+    is a record of who did what and not something to lose on a staff change.
+    """
+    person = db.get(Person, person_id)
+    if not person:
+        raise HTTPException(404, "Person not found")
+    person.active = False
+    db.commit()
+    return {"id": person.id, "name": person.name, "active": False}
+
+
+@router.patch("/{project_id}/roles/{role_id}")
+def set_role_holder(
+    project_id: str, role_id: str, body: RoleHolder, db: Session = Depends(get_db)
+) -> dict:
+    """Say who is filling one role on this project."""
+    role = db.get(ProjectRole, role_id)
+    if role is None or role.project_id != project_id:
+        raise HTTPException(404, "Role not found in this project")
+
+    if body.person_id:
+        person = db.get(Person, body.person_id)
+        if person is None:
+            raise HTTPException(404, "Person not found")
+        role.person_id = person.id
+    else:
+        role.person_id = None
+
+    # Every card naming this role now says something different.
+    for task in db.query(ProjectTask).filter(
+        ProjectTask.project_id == project_id,
+        ProjectTask.assignee_role == role.role_title,
+        ProjectTask.external_ref != "",
+    ):
+        task.board_dirty = True
+
+    db.commit()
+    return {
+        "role_id": role.id,
+        "role_title": role.role_title,
+        "person": role.person.name if role.person else None,
+    }
 
 
 @router.get("/{project_id}/roles")
 def list_roles(project_id: str, db: Session = Depends(get_db)) -> list[dict]:
-    rows = db.query(ProjectRole).filter(ProjectRole.project_id == project_id).all()
+    # Ordered, because the UI draws one picker per row: an unordered query
+    # lets the list reshuffle between renders while somebody is using it.
+    rows = (
+        db.query(ProjectRole)
+        .filter(ProjectRole.project_id == project_id)
+        .order_by(ProjectRole.team, ProjectRole.role_title)
+        .all()
+    )
     return [
         {
+            "role_id": r.id,
             "team": r.team,
             "role_title": r.role_title,
             "responsibility": r.responsibility,
             "headcount": r.headcount,
+            "person_id": r.person_id,
+            "person": r.person.name if r.person else None,
             "source_status": r.source_status,
             "source_chunk_keys": [k for k in r.source_chunk_keys.split(",") if k],
         }
@@ -329,6 +458,9 @@ def project_structure(project_id: str, db: Session = Depends(get_db)) -> dict:
                     "title": r.role_title,
                     "responsibility": r.responsibility,
                     "source_status": r.source_status,
+                    # Named by a human, so it carries no source_status: the SOW
+                    # said the role was needed, not who would fill it.
+                    "person": r.person.name if r.person else None,
                 }
                 for r in roles
                 if r.team == team
@@ -522,6 +654,12 @@ def _calibration_view(db: Session, project_id: str, project_start: date) -> dict
     return summary
 
 
+def _staffing_clashes(db: Session, tasks: list[ProjectTask]) -> list[str]:
+    """One person needed in two places at once, as sentences the PM can act on."""
+    result = validate_staffing(db, tasks)
+    return [] if result.passed else result.detail.split("; ")
+
+
 @router.get("/{project_id}/timeline")
 def get_timeline(project_id: str, db: Session = Depends(get_db)) -> dict:
     """Recompute the schedule and report the critical path.
@@ -546,6 +684,10 @@ def get_timeline(project_id: str, db: Session = Depends(get_db)) -> dict:
         "deadline": deadline,
         "deadline_breach": schedule.deadline_breach,
         "warnings": warnings,
+        # Recomputed rather than read from the last validation run: the PM
+        # can restaff a role at any time, and a stale clash list would be
+        # worse than none.
+        "staffing_clashes": _staffing_clashes(db, tasks),
         # How much of this schedule anybody actually estimated. Without it the
         # dates read as though the work had been sized, when most of them may
         # be the one-day default standing in for a missing estimate.
@@ -699,6 +841,86 @@ def reject_task(
     return _task_view(db, task)
 
 
+@router.get("/{project_id}/drift")
+def get_drift(project_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    """Differences between the board and the plan that nobody has settled."""
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "Project not found")
+    return [
+        {
+            "task_id": row.task_id,
+            "kind": row.kind,
+            "detail": row.detail,
+            "first_seen": row.first_seen_at,
+            "notified": row.notified_at is not None,
+        }
+        for row in open_drift(db, project_id)
+    ]
+
+
+@router.post("/{project_id}/check-board")
+def check_board(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """Read the board now rather than waiting for the next scheduled look."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if not project.board_id:
+        raise HTTPException(409, "This project has no board yet.")
+
+    try:
+        adapter = TrelloAdapter()
+        try:
+            fresh = check_project(db, project, adapter)
+        finally:
+            adapter.close()
+    except TrelloError as exc:
+        raise HTTPException(502, f"Could not read the board: {exc}") from exc
+
+    return {"new": fresh, "open": len(open_drift(db, project_id))}
+
+
+@router.post("/{project_id}/tasks/{task_id}/restore-card")
+def restore_card(project_id: str, task_id: str, db: Session = Depends(get_db)) -> dict:
+    """Un-archive a card somebody put away, most likely by mistake.
+
+    Deliberately not automatic. Archiving is how a board gets tidied, and a
+    platform that silently undid it would be fighting the team; but when it was
+    an accident, recreating the card would lose its comments and its ticked
+    items, so restoring has to be one action rather than a rebuild.
+    """
+    project = db.get(Project, project_id)
+    if not project or not project.board_id:
+        raise HTTPException(404, "Project or board not found")
+    task = _get_task(db, project_id, task_id)
+    if not task.external_ref:
+        raise HTTPException(409, "This task has no card to restore.")
+
+    try:
+        adapter = TrelloAdapter()
+        try:
+            restored = adapter.restore_card(project.board_id, task.external_ref)
+        finally:
+            adapter.close()
+    except TrelloError as exc:
+        raise HTTPException(502, f"Could not restore the card: {exc}") from exc
+
+    if not restored:
+        # Gone rather than archived. Say so plainly instead of reporting a
+        # success that put nothing back.
+        raise HTTPException(
+            409,
+            "That card was deleted, not archived, so it cannot be restored. "
+            "Push the task to create a new card — it will not carry the old "
+            "card's comments or ticked items.",
+        )
+
+    for row in open_drift(db, project_id):
+        if row.task_id == task.id and row.kind == "archived":
+            row.resolved_at = datetime.now(UTC)
+    db.commit()
+    return {"task_id": task.id, "restored": True}
+
+
 @router.get("/{project_id}/audit")
 def get_audit(project_id: str, db: Session = Depends(get_db)) -> dict:
     """Every LLM exchange and validation outcome for this project (brief §22, §37)."""
@@ -749,38 +971,6 @@ def approve_project(project_id: str, db: Session = Depends(get_db)) -> dict:
     project.status = ProjectStatus.APPROVED
     db.commit()
     return {"project_id": project.id, "status": project.status}
-
-
-def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> BoardTask:
-    """Everything a card says about one task.
-
-    Shared by both push routes. While this was written inline inside the
-    project-wide push, a task pushed on its own would have had to grow a second
-    copy of it, and the two would have drifted at the first change.
-    """
-    section = (
-        db.get(SOWSection, task.source_sow_section_id) if task.source_sow_section_id else None
-    )
-    artifacts = derived.get(task.requirement_id or "", {})
-    return BoardTask(
-        task_id=task.id,
-        title=task.title,
-        description=task.description,
-        team=task.team,
-        priority=task.priority,
-        status=task.status,
-        due_date=task.due_date,
-        assignee_role=task.assignee_role,
-        source_status=task.source_status,
-        validation_status=task.validation_status,
-        acceptance_criteria=artifacts.get("criteria", []),
-        assumed_test_fields=sorted(artifacts.get("assumed_fields", set())),
-        test_cases=artifacts.get("cases", []),
-        source_section=section.title if section else "",
-        source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
-        grounding_score=task.grounding_score,
-        depends_on_titles=[d.title for d in task.depends_on],
-    )
 
 
 def _sync(db: Session, project: Project, tasks: list[ProjectTask]):

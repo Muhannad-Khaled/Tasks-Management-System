@@ -6,6 +6,7 @@ evaluated against each other without touching the pipeline.
 
 from __future__ import annotations
 
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
@@ -51,6 +52,10 @@ class BoardTask:
     due_date: date | None = None
     assignee: str = ""
     assignee_role: str = ""
+    # The person filling that role, when somebody has said who. Kept apart from
+    # the role because the role came from the SOW and the name came from a
+    # human, and a card should not blur the two.
+    assignee_name: str = ""
     source_status: str = "explicit"
     validation_status: str = "pending"
     source_section: str = ""
@@ -123,7 +128,14 @@ class BoardTask:
 
         facts = []
         if self.assignee_role:
-            facts.append(f"**Role:** {self.assignee_role}")
+            # Both, when both are known: the name says who to ask, the role says
+            # why it is theirs. Only the role is traceable to the SOW.
+            owner = (
+                f"{self.assignee_name} ({self.assignee_role})"
+                if self.assignee_name
+                else self.assignee_role
+            )
+            facts.append(f"**Owner:** {owner}")
         if self.depends_on_titles:
             facts.append("**Blocked by:** " + "; ".join(self.depends_on_titles))
         if self.source_section:
@@ -154,6 +166,37 @@ class BoardTask:
         return "\n\n---\n\n".join(parts)
 
 
+@dataclass(frozen=True)
+class CardSnapshot:
+    """A card as the board holds it right now.
+
+    Read back rather than assumed. Everything the platform can tell about what
+    a person did to a card by hand — moved it, retitled it, rewrote it — comes
+    from comparing this against what was last written.
+    """
+
+    location: str
+    title: str
+    description: str
+    # Archived, not gone. Kept apart from a card that is missing entirely
+    # because an archived card can be put back exactly as it was.
+    archived: bool = False
+
+    def fingerprint(self) -> str:
+        return content_fingerprint(self.title, self.description)
+
+
+def content_fingerprint(title: str, description: str) -> str:
+    """A short digest of what a card says.
+
+    Stored at push time and compared later. Comparing the card against what the
+    plan would render *now* cannot tell a person's edit from a plan that has
+    legitimately moved on since — this can.
+    """
+    digest = hashlib.sha256(f"{title}\x00{description}".encode())
+    return digest.hexdigest()[:32]
+
+
 class TaskManagerInterface(ABC):
     """Implemented by TrelloAdapter and (in M7) PlaneAdapter.
 
@@ -177,12 +220,30 @@ class TaskManagerInterface(ABC):
         """The name of the list/column the plan puts this task's card in."""
         return ""
 
-    def card_locations(self, board_id: str) -> dict[str, str]:
-        """Where each card actually sits now: external id -> list name.
+    def close(self) -> None:
+        """Release whatever the adapter is holding open.
 
-        Returning nothing is a valid answer for a backend that cannot report
-        this. Drift then goes unnoticed, which is better than reporting it
-        wrongly against a board whose shape we cannot read.
+        Declared here with a default because every caller closes the adapter it
+        opened, and an implementation with nothing to release should not have
+        to write an empty method to avoid an AttributeError at runtime.
+        """
+
+    def restore_card(self, board_id: str, external_id: str) -> bool:
+        """Put an archived card back, with everything it still holds.
+
+        False when the backend cannot do it, in which case the only route left
+        is creating a new card — and that loses the comments and ticks the old
+        one carried.
+        """
+        return False
+
+    def card_snapshots(self, board_id: str) -> dict[str, CardSnapshot]:
+        """Every card on the board as it stands: external id -> snapshot.
+
+        Returning nothing is a valid answer for a backend that cannot read its
+        board back. Drift then goes unnoticed, which is better than reporting
+        it wrongly — and an id missing from a populated mapping is taken to
+        mean the card was deleted, so a partial answer would be worse than none.
         """
         return {}
 

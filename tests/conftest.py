@@ -72,6 +72,7 @@ def _no_embedding(monkeypatch):
 # survive, the DELETE of whatever they reference raises, and the cleanup dies
 # mid-way. Add new tables to this list when they gain a foreign key.
 _CLEANUP_ORDER = [
+    "board_drift",
     "acceptance_criteria",
     "test_cases",
     "user_stories",
@@ -91,6 +92,9 @@ _CLEANUP_ORDER = [
     "sow_documents",
     "llm_requests",
     "projects",
+    # After project_roles, which points at it.
+    "person_roles",
+    "people",
 ]
 
 

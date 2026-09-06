@@ -125,6 +125,137 @@ def render_upload() -> None:
                 st.warning(warning)
 
 
+def render_evidence(key: str, page: str, text: str) -> None:
+    """Show a cited chunk the way it reads in the SOW.
+
+    Markdown collapses a single newline into a space, which turned an extracted
+    table into one long line with every quantity next to the wrong item. The
+    text is checked for the table's own separator rather than trusted to
+    survive being rendered as prose.
+    """
+    st.caption(f"{key}{page}")
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) > 1 and all("|" in line for line in lines):
+        # A real table: header, a rule, then the rows Streamlit will align.
+        columns = len(lines[0].split("|"))
+        rule = " | ".join(["---"] * columns)
+        st.markdown("\n".join([lines[0], rule, *lines[1:]]))
+        return
+    st.info(text)
+
+
+UNASSIGNED = "— nobody yet —"
+
+
+def _save_roles(person_id: str, name: str) -> None:
+    """Persist a role change the moment somebody makes one, and only then."""
+    api(
+        "PATCH",
+        f"/people/{person_id}",
+        json={"name": name, "roles": st.session_state[f"caps-{person_id}"]},
+    )
+
+
+def render_people_directory() -> list[dict]:
+    """The company's people, shared by every project.
+
+    Typed by a person, never extracted. The roster comes from the SOW and says
+    which roles the work needs; this says who fills them, and the two are kept
+    apart so a card can show a name without implying the SOW named anybody.
+    """
+    people = api("GET", "/people") or []
+    active = [p for p in people if p["active"]]
+    roster = api("GET", "/people/roles") or []
+    titles = [r["title"] for r in roster]
+
+    with st.expander(f"👥 People ({len(active)})", expanded=not active):
+        st.caption(
+            "Shared across every project. Say what someone does once, and every "
+            "SOW you upload from then on staffs itself — a role with exactly one "
+            "person who can do it is filled automatically."
+        )
+        # A form rather than a bare input: Streamlit holds a keyed widget's
+        # value across reruns, so the name just added stayed in the box and the
+        # next Add re-sent it. clear_on_submit empties it once the add lands.
+        with st.form("add-person", clear_on_submit=True):
+            name = st.text_input("Name", placeholder="e.g. Ahmed Fathy")
+            chosen = st.multiselect("Can work as", options=titles)
+            submitted = st.form_submit_button("Add")
+        if (
+            submitted
+            and name.strip()
+            and api("POST", "/people", json={"name": name, "roles": chosen})
+        ):
+            st.rerun()
+
+        for person in active:
+            row, action = st.columns([5, 1])
+            with row:
+                # on_change, not a comparison after the fact. A keyed widget
+                # reports its session value on every rerun, so writing whenever
+                # that differed from the server let a stale browser tab
+                # overwrite correct data without anybody touching anything.
+                st.multiselect(
+                    person["name"],
+                    options=titles,
+                    default=[r for r in person["roles"] if r in titles],
+                    key=f"caps-{person['id']}",
+                    on_change=_save_roles,
+                    args=(person["id"], person["name"]),
+                )
+            if action.button("Remove", key=f"rm-{person['id']}") and api(
+                "DELETE", f"/people/{person['id']}"
+            ):
+                st.rerun()
+
+        unassignable = [p for p in active if not p["roles"]]
+        if unassignable:
+            # Not an error: somebody can sit in the directory unassignable and
+            # still be picked by hand. But automatic staffing will skip them,
+            # and silently skipping is what makes a feature look broken.
+            st.caption(
+                "No role set, so they will not be staffed automatically: "
+                + ", ".join(p["name"] for p in unassignable)
+            )
+
+        retired = [p for p in people if not p["active"]]
+        if retired:
+            # Kept, not deleted: their name still explains who was assigned what
+            # on plans that already ran.
+            st.caption("No longer here: " + ", ".join(p["name"] for p in retired))
+    return active
+
+
+def render_role_assignment(project_id: str, roles: list[dict], people: list[dict]) -> None:
+    """Put a person on each role the SOW asked for."""
+    if not people:
+        st.info("Add someone to the directory above to assign roles.")
+        return
+
+    by_name = {p["name"]: p["id"] for p in people}
+    options = [UNASSIGNED, *by_name]
+
+    for role in roles:
+        current = role.get("person") or UNASSIGNED
+        if current not in options:
+            # Whoever held it has since been retired from the directory. Their
+            # name stays on the plan; it just cannot be picked again.
+            options = [*options, current]
+        chosen = st.selectbox(
+            f"{TEAM_COLORS.get(role['team'], '')} {role['role_title']}",
+            options=options,
+            index=options.index(current),
+            key=f"role-{role['role_id']}",
+        )
+        if chosen != current:
+            api(
+                "PATCH",
+                f"/projects/{project_id}/roles/{role['role_id']}",
+                json={"person_id": by_name.get(chosen)},
+            )
+            st.rerun()
+
+
 def render_timeline(project_id: str) -> None:
     timeline = api("GET", f"/projects/{project_id}/timeline")
     if not timeline:
@@ -143,6 +274,12 @@ def render_timeline(project_id: str) -> None:
     for warning in timeline["warnings"]:
         if "dependency" in warning:
             st.warning(warning)
+
+    # Who is on what, against when. Shown on the timeline because it is a
+    # scheduling fact, not a staffing preference: the dates are what make it
+    # a problem.
+    for clash in timeline.get("staffing_clashes") or []:
+        st.warning(f"👤 {clash}")
 
     coverage = timeline.get("estimate_coverage")
     assumed = timeline.get("assumed_durations") or []
@@ -253,7 +390,20 @@ BOARD_BADGES = {
 }
 
 
-def board_badge(task: dict) -> str:
+def board_badge(task: dict, drift_kind: str | None = None) -> str:
+    """What the board says about this task, including anything done to it there.
+
+    Drift wins over the plain state. The platform is the only place this is
+    reported now, so a card that has been archived must not keep reading "on
+    the board" — that is the exact false reassurance the check exists to stop.
+    """
+    if drift_kind:
+        return {
+            "archived": "📦 archived on the board — restorable",
+            "deleted": "🗑️ deleted from the board",
+            "moved": "↔️ moved to another list on the board",
+            "edited": "✏️ edited on the board",
+        }.get(drift_kind, f"⚠️ {drift_kind}")
     return BOARD_BADGES[(bool(task["external_ref"]), bool(task["board_dirty"]))]
 
 
@@ -289,6 +439,54 @@ def render_push_button(column, project_id: str, task: dict) -> None:
     st.rerun()
 
 
+DRIFT_ICONS = {"moved": "↔️", "edited": "✏️", "archived": "📦", "deleted": "🗑️"}
+
+
+def render_board_drift(project_id: str, drift: list[dict]) -> None:
+    """Differences between the board and the plan, with a way to look again.
+
+    Nothing here is a button that fixes anything. Every one of these is
+    somebody's deliberate change to the board, and the platform's job is to
+    make sure it was not made invisibly — not to undo it.
+    """
+    header = "Board vs. plan" + (f" — {len(drift)} open" if drift else "")
+    with st.expander(header, expanded=bool(drift)):
+        if st.button("Check the board now", key="check-board"):
+            with st.spinner("Reading the board…"):
+                result = api("POST", f"/projects/{project_id}/check-board")
+            if result is not None:
+                found = len(result["new"])
+                st.success(
+                    f"{found} new difference(s)." if found else "Nothing new to report."
+                )
+                st.rerun()
+
+        if not drift:
+            st.caption("The board matches the plan.")
+            return
+
+        for item in drift:
+            icon = DRIFT_ICONS.get(item["kind"], "-")
+            st.warning(f"{icon} {item['detail']}")
+            # Only the archived case has a way back that keeps anything. A
+            # deleted card can only be replaced, so offering "restore" there
+            # would promise something the board cannot give.
+            if (
+                item["kind"] == "archived"
+                and st.button("Restore this card", key=f"restore-{item['task_id']}")
+                and api(
+                    "POST",
+                    f"/projects/{project_id}/tasks/{item['task_id']}/restore-card",
+                )
+            ):
+                st.success("Put back, with its comments and ticks.")
+                st.rerun()
+        st.caption(
+            "None of these were changed back. Push the task again to make the "
+            "board match the plan, or edit the task if the board was right."
+        )
+
+
 REVIEW_BADGES = {
     "pending": "⏳ awaiting review",
     "approved": "✅ approved",
@@ -305,7 +503,7 @@ def render_review_controls(project_id: str, task: dict) -> None:
     """
     st.divider()
     st.caption(f"Review: {REVIEW_BADGES.get(task['review_status'], task['review_status'])}")
-    st.caption(f"Board: {board_badge(task)}")
+    st.caption(f"Board: {board_badge(task, task.get('drift_kind'))}")
     if task["regeneration_count"]:
         st.caption(f"Regenerated {task['regeneration_count']} time(s)")
     if task["review_note"]:
@@ -447,6 +645,16 @@ def render_structure(project_id: str) -> None:
     if not structure:
         return
 
+    people = render_people_directory()
+    roles = api("GET", f"/projects/{project_id}/roles") or []
+    if roles:
+        with st.expander("🧑‍💼 Who is on this project", expanded=False):
+            st.caption(
+                "The SOW says which roles the work needs. This says who fills "
+                "them — and that name goes onto every card the role owns."
+            )
+            render_role_assignment(project_id, roles, people)
+
     totals = structure["totals"]
     row = st.columns(5)
     row[0].metric("Requirements", totals["requirements"])
@@ -472,8 +680,9 @@ def render_structure(project_id: str) -> None:
                 st.caption("**Roles**")
                 for role in node["roles"]:
                     badge, _ = SOURCE_BADGES.get(role["source_status"], ("❓", ""))
+                    holder = f" · 👤 {role['person']}" if role.get("person") else ""
                     st.markdown(
-                        f"- {badge} **{role['title']}**"
+                        f"- {badge} **{role['title']}**{holder}"
                         + (f" — {role['responsibility']}" if role["responsibility"] else "")
                     )
 
@@ -591,6 +800,14 @@ def render_project(project_id: str, projects: list[dict]) -> None:
     right.metric("Assumptions", project["assumption_count"])
 
     tasks = api("GET", f"/projects/{project_id}/tasks") or []
+    # One call for the page, not one per task: the worst thing this tab ever
+    # did was a request inside every expander.
+    drift_by_task = {
+        row["task_id"]: row["kind"]
+        for row in api("GET", f"/projects/{project_id}/drift") or []
+    }
+    for task in tasks:
+        task["drift_kind"] = drift_by_task.get(task["id"])
     # Fetched once for the whole page rather than once per citation.
     evidence_by_key = api("GET", f"/projects/{project_id}/evidence") or {}
     assumptions = api("GET", f"/projects/{project_id}/assumptions") or []
@@ -667,7 +884,7 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                         evidence = evidence_by_key.get(key)
                         if evidence:
                             page = f" · page {evidence['page']}" if evidence["page"] else ""
-                            st.info(f"**{key}**{page}\n\n{evidence['text']}")
+                            render_evidence(key, page, evidence["text"])
                     if task["external_ref"]:
                         st.caption(f"Trello card: {task['external_ref']}")
                     render_review_controls(project_id, task)
@@ -698,6 +915,7 @@ def render_project(project_id: str, projects: list[dict]) -> None:
             st.success("No assumptions were needed — the SOW covered everything extracted.")
 
     with approve_tab:
+        render_board_drift(project_id, api("GET", f"/projects/{project_id}/drift") or [])
         st.caption(
             "Nothing reaches Trello until a PM approves. Push tasks one at a time "
             "from the Tasks tab as you finish reviewing them, or approve the plan "

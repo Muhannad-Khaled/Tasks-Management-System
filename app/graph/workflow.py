@@ -41,6 +41,7 @@ from app.graph.persistence import (
     persist_grounding,
     persist_questions,
 )
+from app.graph.staffing import autostaff
 from app.grounding.engine import ground_project, project_grounding_score
 from app.ingestion.parser import parse_document
 from app.ingestion.validation import ParsingStatus, validate_parsed_document
@@ -194,6 +195,10 @@ def make_persist_node(db: Session):
         # happened to volunteer, so its assumptions replace those.
         assumptions = persist_assumptions(db, project, state.get("assumptions", []))
         questions = persist_questions(db, project, state.get("questions", []))
+        # Straight after the tasks exist, so the plan arrives already staffed.
+        # Only propagates what somebody has already said about who does what —
+        # see app/graph/staffing.py for why it refuses to break a tie.
+        staffing_notes = autostaff(db, project.id)
         info = extraction.project_info
         project.status = ProjectStatus.AWAITING_APPROVAL
         project.name = info.project_name or project.name
@@ -201,7 +206,7 @@ def make_persist_node(db: Session):
         project.start_date = info.start_date
         project.go_live_date = info.go_live_date or info.end_date
         db.commit()
-        warnings = list(extraction_warnings)
+        warnings = list(extraction_warnings) + staffing_notes
         if fabricated:
             warnings.append(
                 f"dropped {len(fabricated)} citation(s) not present in the SOW: {fabricated[:5]}"

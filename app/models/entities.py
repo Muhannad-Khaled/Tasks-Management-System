@@ -83,6 +83,9 @@ class Project(Base):
     roles: Mapped[list[ProjectRole]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    drift: Mapped[list[BoardDrift]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
     milestones: Mapped[list[ProjectMilestone]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
@@ -181,6 +184,10 @@ class ProjectTask(Base):
     grounding_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     validation_status: Mapped[str] = mapped_column(String(32), default="pending")
     external_ref: Mapped[str] = mapped_column(String(255), default="")  # Trello card / Plane issue
+    # A digest of the title and body last written to the board. Without it,
+    # a card that differs from the plan is ambiguous: it could be a person's
+    # edit, or a plan that has moved on since the card was written.
+    board_fingerprint: Mapped[str] = mapped_column(String(64), default="")
     # Set when a task that is already on the board changes, so pushing the rest
     # of the project updates the cards that moved on and leaves the others
     # alone. Re-sending every card each time costs ~3 Trello calls per card.
@@ -193,12 +200,90 @@ class ProjectTask(Base):
 
     project: Mapped[Project] = relationship(back_populates="tasks")
     requirement: Mapped[ProjectRequirement | None] = relationship(back_populates="tasks")
+    drift: Mapped[list[BoardDrift]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
     source_section: Mapped[SOWSection | None] = relationship()
     depends_on: Mapped[list[ProjectTask]] = relationship(
         secondary=task_dependencies,
         primaryjoin=id == task_dependencies.c.task_id,
         secondaryjoin=id == task_dependencies.c.depends_on_id,
     )
+
+
+class Person(Base):
+    """Somebody who actually does the work.
+
+    Not tied to a project: one directory the whole platform draws on, so a
+    person who leaves is corrected once rather than in every plan that named
+    them. Nothing here is ever extracted or inferred — a row exists only
+    because a human typed it.
+    """
+
+    __tablename__ = "people"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    # Kept rather than deleted: a person who has left still explains who was
+    # assigned what on a plan that already ran.
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    roles: Mapped[list[ProjectRole]] = relationship(back_populates="person")
+
+    capabilities: Mapped[list[PersonRole]] = relationship(
+        back_populates="person", cascade="all, delete-orphan"
+    )
+
+    @property
+    def role_titles(self) -> list[str]:
+        return sorted(row.role_title for row in self.capabilities)
+
+
+class PersonRole(Base):
+    """One thing a person can be put on.
+
+    A separate row per role rather than a column: people on a small team wear
+    several hats, and a single "their role" field would force everything after
+    the first to be staffed by hand — which is the work this exists to remove.
+    """
+
+    __tablename__ = "person_roles"
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id"), primary_key=True)
+    role_title: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    person: Mapped[Person] = relationship(back_populates="capabilities")
+
+
+class BoardDrift(Base):
+    """A difference between the board and the plan that nobody has settled yet.
+
+    Kept as rows rather than recomputed each time so a difference is reported
+    once and then left alone. An alert that repeats every cycle until someone
+    acts is an alert people turn off, and the next one after that goes unread.
+    """
+
+    __tablename__ = "board_drift"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("project_tasks.id"))
+    kind: Mapped[str] = mapped_column(String(16))  # moved | edited | deleted
+    detail: Mapped[str] = mapped_column(Text, default="")
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Null until the PM has been told. A row can exist unsent when no webhook
+    # is configured, and it is still worth showing in the UI.
+    notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set when a later check no longer finds the difference — the card was put
+    # back, or the plan was changed to agree with it.
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    project: Mapped[Project] = relationship(back_populates="drift")
+    task: Mapped[ProjectTask] = relationship(back_populates="drift")
 
 
 class ProjectRequirement(Base):
@@ -247,9 +332,13 @@ class ProjectRole(Base):
     responsibility: Mapped[str] = mapped_column(Text, default="")
     headcount: Mapped[int] = mapped_column(Integer, default=1)
     source_status: Mapped[str] = mapped_column(String(16), default="assumed")
+    # Who holds this role on this project. Null until somebody says; the plan
+    # is complete and usable without it, which is why it is not required.
+    person_id: Mapped[str | None] = mapped_column(ForeignKey("people.id"), nullable=True)
     source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
 
     project: Mapped[Project] = relationship(back_populates="roles")
+    person: Mapped[Person | None] = relationship(back_populates="roles")
 
 
 class ProjectMilestone(Base):

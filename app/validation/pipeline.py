@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.grounding.engine import GroundingStatus, TaskGrounding, project_grounding_score
 from app.models import (
     ProjectMilestone,
+    ProjectRole,
     ProjectTask,
     ProjectTestCase,
     SOWChunk,
@@ -341,6 +343,63 @@ def record_stage(db: Session, project_id: str, stage: StageResult) -> None:
     db.commit()
 
 
+def _owner_of(db: Session, task: ProjectTask) -> str:
+    """The person doing this task, by the same rule the card body uses."""
+    if task.assignee:
+        return task.assignee
+    role = (
+        db.query(ProjectRole)
+        .filter(
+            ProjectRole.project_id == task.project_id,
+            ProjectRole.role_title == task.assignee_role,
+        )
+        .first()
+    )
+    return role.person.name if role and role.person else ""
+
+
+def validate_staffing(db: Session, tasks: list[ProjectTask]) -> StageResult:
+    """One person cannot be in two places at once.
+
+    A warning rather than a failure, like every other schedule finding here.
+    Someone genuinely may split a week across two small tasks, and the platform
+    has no way to know which case this is — but it does know the dates overlap,
+    and saying so is the whole job.
+    """
+    scheduled: dict[str, list[ProjectTask]] = defaultdict(list)
+    for task in tasks:
+        if task.start_date and task.due_date and (owner := _owner_of(db, task)):
+            scheduled[owner].append(task)
+
+    clashes: list[str] = []
+    offenders: list[str] = []
+    for owner, owned in scheduled.items():
+        owned.sort(key=lambda t: t.start_date)
+        # Carry the task that runs latest rather than simply the previous one:
+        # a long task overlaps everything that starts before it ends, and
+        # comparing neighbours would miss all but the first of them.
+        running = owned[0]
+        for task in owned[1:]:
+            # Inclusive dates: finishing and starting on the same day is one
+            # person working both, not a clean handover.
+            if task.start_date <= running.due_date:
+                days = (running.due_date - task.start_date).days + 1
+                clashes.append(
+                    f"{owner} is on {running.title!r} and {task.title!r} "
+                    f"at the same time ({days} day(s) overlapping)"
+                )
+                offenders += [running.id, task.id]
+            if task.due_date > running.due_date:
+                running = task
+
+    return StageResult(
+        stage="staffing",
+        passed=not clashes,
+        detail="; ".join(clashes) if clashes else f"{len(scheduled)} person(s), no clashes",
+        offending_task_ids=sorted(set(offenders)),
+    )
+
+
 def run_validation(
     db: Session,
     project_id: str,
@@ -357,6 +416,7 @@ def run_validation(
             validate_dependencies(tasks),
             validate_timeline(tasks, deadline),
             validate_milestones(db, project_id),
+            validate_staffing(db, tasks),
         ]
     )
 

@@ -125,3 +125,35 @@ def test_unsupported_format_is_rejected(tmp_path):
     bad.write_text("x", encoding="utf-8")
     with pytest.raises(ValueError, match="Unsupported"):
         parse_document(bad, "SOW-999")
+
+
+def test_a_wrapped_table_cell_stays_on_one_row():
+    """Rows are joined with newlines, so a cell holding one splits its own row.
+
+    Seen in a real SOW: "Merchant onboarding questionnaires | 15 | ..." arrived
+    as two lines, and the quantity 15 then read as belonging to nothing.
+    """
+    from app.ingestion.parser import _flatten_cell
+
+    assert (
+        _flatten_cell("Merchant onboarding\nquestionnaires")
+        == "Merchant onboarding questionnaires"
+    )
+    assert "\n" not in _flatten_cell("a\nb\nc")
+    assert _flatten_cell(None) == ""
+
+
+def test_every_extracted_table_row_is_a_single_line():
+    """The invariant the chunk format rests on: one line is one row."""
+    from app.ingestion.parser import parse_document
+
+    doc = parse_document(CORPUS / "sow_a_cairomart.pdf", "SOW-TBL")
+    tables = [c for _, c in doc.iter_chunks() if c.is_table]
+    assert tables, "the sample SOW has tables; the parser found none"
+
+    for chunk in tables:
+        for line in chunk.text.splitlines():
+            if line.strip():
+                # Every row carries its own separators. A row split in half
+                # loses them, which is how the break shows up.
+                assert "|" in line, f"row without cells -> {line!r}"

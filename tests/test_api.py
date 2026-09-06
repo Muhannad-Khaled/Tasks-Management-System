@@ -146,6 +146,8 @@ def test_grounding_endpoint_reports_scores_and_names_the_failures(client, seeded
         "timeline",
         # Checks the dates the SOW commits to between kickoff and go-live.
         "milestones",
+        # One person needed in two places at once, now that tasks carry names.
+        "staffing",
         # Recorded after run_validation, by the node that derives the artifacts.
         "derived_artifacts",
     }

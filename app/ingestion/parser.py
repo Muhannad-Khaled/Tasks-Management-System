@@ -177,10 +177,24 @@ def parse_docx(path: Path, doc_key: str) -> ParsedDocument:
                 blocks.append((text, None, False))
         elif tag == "tbl":
             table = DocxTable(child, document)
-            rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
+            rows = [
+                " | ".join(_flatten_cell(cell.text) for cell in row.cells)
+                for row in table.rows
+            ]
             if rows:
                 blocks.append(("\n".join(rows), None, True))
     return _blocks_to_document(blocks, doc_key, path.name, "docx", page_count=None)
+
+
+def _flatten_cell(text: str | None) -> str:
+    """One cell, one line.
+
+    Rows are joined with newlines, so a cell that wraps inside the document
+    carries a newline of its own and splits its row in two. A row broken across
+    two lines reads as two rows, and the quantity in the second half then
+    belongs to nothing.
+    """
+    return " ".join((text or "").split())
 
 
 def _paragraph_gap_threshold(gaps: list[float]) -> float:
@@ -261,7 +275,7 @@ def parse_pdf(path: Path, doc_key: str) -> ParsedDocument:
             tables: list[tuple[float, list[str]]] = []
             for table_obj, table in zip(found, page.extract_tables() or []):
                 rows = [
-                    " | ".join((cell or "").strip() for cell in row)
+                    " | ".join(_flatten_cell(cell) for cell in row)
                     for row in table
                     if any(cell for cell in row)
                 ]

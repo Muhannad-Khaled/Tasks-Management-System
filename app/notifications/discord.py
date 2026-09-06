@@ -64,3 +64,32 @@ def notify_review_ready(webhook_url: str | None = None, **kwargs) -> bool:
         logger.info("No Discord webhook configured; skipping notification")
         return False
     return _post(url, format_review_ready(**kwargs))
+
+
+def format_board_drift(messages: list[str]) -> str:
+    """One message for everything a single check turned up.
+
+    Grouped rather than sent one per difference: a person who moved four cards
+    in a row should get one notification about it, not four.
+    """
+    lines = [f"**The board no longer matches the plan** ({len(messages)} change(s))", ""]
+    lines += [f"- {message}" for message in messages]
+    lines.append("")
+    lines.append("Nothing was changed on the board. Review these in the platform.")
+    return "\n".join(lines)
+
+
+def notify_board_drift(messages: list[str], webhook_url: str | None = None) -> bool:
+    """Tell the PM what changed on the board behind the plan's back.
+
+    Returns False when there is no webhook set, and the caller leaves the
+    differences unmarked so they are still waiting to be sent if one is
+    configured later.
+    """
+    if not messages:
+        return False
+    url = webhook_url or get_settings().discord_webhook_url
+    if not url:
+        logger.info("No Discord webhook configured; board drift recorded but not sent")
+        return False
+    return _post(url, format_board_drift(messages))

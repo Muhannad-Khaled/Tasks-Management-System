@@ -418,3 +418,31 @@ def test_an_edited_task_gets_a_pushable_colour_for_every_label():
     assert all(c in TRELLO_LABEL_COLORS for c in colours), dict(
         zip(task.labels(), colours, strict=True)
     )
+
+
+def test_credentials_never_reach_the_url():
+    """httpx logs request URLs at INFO, so a URL is a place secrets get printed.
+
+    This is not hypothetical: running the board check with INFO logging on
+    printed a working key and token to the console in full.
+    """
+    import httpx
+
+    from app.taskmanager.trello import API, TrelloAdapter
+
+    adapter = TrelloAdapter(api_key="KEY-SHOULD-NOT-APPEAR", token="TOKEN-SHOULD-NOT-APPEAR")
+    seen = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("Authorization", "")
+        return httpx.Response(200, json={})
+
+    adapter.http = httpx.Client(
+        transport=httpx.MockTransport(capture), headers=dict(adapter.http.headers)
+    )
+    adapter._request("GET", "/boards/b1/lists", fields="name")
+
+    assert seen["url"].startswith(API)
+    assert "SHOULD-NOT-APPEAR" not in seen["url"], seen["url"]
+    assert "KEY-SHOULD-NOT-APPEAR" in seen["auth"]

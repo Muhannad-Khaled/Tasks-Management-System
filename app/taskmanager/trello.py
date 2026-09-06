@@ -13,7 +13,7 @@ import logging
 import httpx
 
 from app.core.config import get_settings
-from app.taskmanager.base import BoardTask, TaskManagerInterface
+from app.taskmanager.base import BoardTask, CardSnapshot, TaskManagerInterface
 from app.taskmanager.labels import label_color
 
 logger = logging.getLogger(__name__)
@@ -42,13 +42,21 @@ class TrelloAdapter(TaskManagerInterface):
             raise TrelloError(
                 "TRELLO_API_KEY and TRELLO_API_TOKEN must be set in .env to push to Trello."
             )
-        self.http = httpx.Client(timeout=timeout)
-
-    def _auth(self, **params) -> dict:
-        return {"key": self.api_key, "token": self.token, **params}
+        # In a header rather than the query string: httpx logs request URLs at
+        # INFO, so credentials in the URL are one stray log level away from
+        # being printed in full to a console or a log file.
+        self.http = httpx.Client(
+            timeout=timeout,
+            headers={
+                "Authorization": (
+                    f'OAuth oauth_consumer_key="{self.api_key}", '
+                    f'oauth_token="{self.token}"'
+                )
+            },
+        )
 
     def _request(self, method: str, path: str, **params):
-        response = self.http.request(method, f"{API}{path}", params=self._auth(**params))
+        response = self.http.request(method, f"{API}{path}", params=params)
         if response.status_code >= 400:
             raise TrelloError(
                 f"{method} {path} -> {response.status_code}: {response.text[:300]}",
@@ -95,15 +103,46 @@ class TrelloAdapter(TaskManagerInterface):
         target = task.team.capitalize()
         return target if target in LISTS else "Backlog"
 
-    def card_locations(self, board_id: str) -> dict[str, str]:
-        """Which list every card on the board is in right now.
+    def card_snapshots(self, board_id: str) -> dict[str, CardSnapshot]:
+        """Every card on the board, as it stands right now.
 
         Two calls whatever the board holds, so checking a whole project costs
-        the same as checking one task.
+        the same as checking one task. The name and description ride along with
+        the list for free, which is what makes hand edits visible at all.
         """
         lists = {lst["id"]: lst["name"] for lst in self._request("GET", f"/boards/{board_id}/lists")}
-        cards = self._request("GET", f"/boards/{board_id}/cards", fields="idList") or []
-        return {card["id"]: lists.get(card["idList"], "") for card in cards}
+        # /cards/all, not /cards: the plain endpoint hides archived cards, and
+        # an archived card would then be indistinguishable from a deleted one.
+        # It is not — it comes back whole.
+        cards = (
+            self._request(
+                "GET", f"/boards/{board_id}/cards/all", fields="idList,name,desc,closed"
+            )
+            or []
+        )
+        return {
+            card["id"]: CardSnapshot(
+                location=lists.get(card["idList"], ""),
+                title=card.get("name", ""),
+                description=card.get("desc", ""),
+                archived=bool(card.get("closed")),
+            )
+            for card in cards
+        }
+
+    def restore_card(self, board_id: str, external_id: str) -> bool:
+        """Un-archive a card, keeping its comments, ticks and history."""
+        try:
+            self._request("PUT", f"/cards/{external_id}", closed="false")
+        except TrelloError as exc:
+            if exc.status_code == 404:
+                # Archived is recoverable; deleted is not, and this is how the
+                # difference finally shows up.
+                logger.info("Card %s cannot be restored; it is gone", external_id)
+                return False
+            raise
+        logger.info("Restored archived card %s", external_id)
+        return True
 
     def push_tasks(self, board_id: str, tasks: list[BoardTask]) -> dict[str, str]:
         list_ids = self._list_ids(board_id)

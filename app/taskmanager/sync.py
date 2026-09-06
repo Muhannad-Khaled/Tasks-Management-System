@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session
 
 from app.models import Project, ProjectTask
 from app.schemas.enums import ProjectStatus, ReviewStatus
-from app.taskmanager.base import BoardTask, TaskManagerInterface
+from app.taskmanager import drift
+from app.taskmanager.base import (
+    BoardTask,
+    TaskManagerInterface,
+    content_fingerprint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +72,18 @@ def sync_tasks(
             to_create.append(task)
             continue
         if adapter.update_task(board_id, task.external_ref, board_tasks[task.id]):
-            task.board_dirty = False
+            _remember(task, board_tasks[task.id])
             result.updated.append(task.id)
         else:
-            # Somebody deleted the card by hand. Reporting a successful update
-            # would leave the PM believing work is on a board it is not on.
+            # Somebody deleted the card by hand, and it is not put back here.
+            # Recreating it would undo their decision in the middle of an
+            # operation about a different task; the PM is told instead and can
+            # push this one deliberately if it should return.
             result.warnings.append(
-                f"{task.title!r} was no longer on the board, so it was created again"
+                f"{task.title!r} is no longer on the board. It was not recreated — "
+                "push it again to restore it."
             )
             task.external_ref = ""
-            to_create.append(task)
 
     if to_create:
         # One call for the whole batch: the adapter reads the board's lists and
@@ -86,45 +93,47 @@ def sync_tasks(
         for task in to_create:
             if external_id := created.get(task.id):
                 task.external_ref = external_id
-                task.board_dirty = False
+                _remember(task, board_tasks[task.id])
                 result.created.append(task.id)
 
-    result.warnings.extend(_moved_cards(board_id, tasks, board_tasks, adapter))
+    result.warnings.extend(check_drift(db, project, tasks, board_tasks, adapter))
     result.warnings.extend(_dangling_dependencies(tasks))
     refresh_status(project)
     db.commit()
     return result
 
 
-def _moved_cards(
-    board_id: str,
+def _remember(task: ProjectTask, board_task: BoardTask) -> None:
+    """Record what the board was just told, so a later edit to it shows up."""
+    task.board_fingerprint = content_fingerprint(
+        board_task.title, board_task.rendered_description()
+    )
+    task.board_dirty = False
+
+
+def check_drift(
+    db: Session,
+    project: Project,
     tasks: list[ProjectTask],
     board_tasks: dict[str, BoardTask],
     adapter: TaskManagerInterface,
 ) -> list[str]:
-    """Cards someone has moved to a list the plan does not put them in.
+    """Compare the board with the plan and record anything that disagrees.
 
-    Never corrected. A person moved that card on purpose, and an update that
-    quietly dragged it back would overwrite their decision with a stale one —
-    so no push sends a card's list, only its contents. What is left is the two
-    records disagreeing, and the only real danger there is nobody noticing.
+    Runs on every push as well as on the timer, because the board is read back
+    here anyway and a PM who is already looking at the plan is the right person
+    to see it. Nothing is corrected — see app/taskmanager/drift.py.
     """
     on_board = [task for task in tasks if task.external_ref]
     if not on_board:
         return []
 
-    actual = adapter.card_locations(board_id)
-    warnings = []
-    for task in on_board:
-        found = actual.get(task.external_ref)
-        planned = adapter.expected_location(board_tasks[task.id])
-        if found and planned and found != planned:
-            warnings.append(
-                f"{task.title!r} sits in {found!r} on the board, but the plan has it "
-                f"under {task.team} ({planned!r}). The board was left as it is — "
-                "change the task here if the move was right."
-            )
-    return warnings
+    snapshots = adapter.card_snapshots(project.board_id)
+    found = drift.detect(on_board, board_tasks, snapshots, adapter)
+    fresh = drift.reconcile(db, project.id, found)
+    # Only the new ones are worth saying out loud; a difference the PM has
+    # already been shown does not need repeating on every push.
+    return [row.detail for row in fresh]
 
 
 def _dangling_dependencies(tasks: list[ProjectTask]) -> list[str]:
