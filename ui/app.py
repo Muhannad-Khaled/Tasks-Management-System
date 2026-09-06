@@ -123,6 +123,78 @@ def render_timeline(project_id: str) -> None:
         if "dependency" in warning:
             st.warning(warning)
 
+    coverage = timeline.get("estimate_coverage")
+    assumed = timeline.get("assumed_durations") or []
+    if coverage is not None and assumed:
+        st.warning(
+            f"Only {coverage:.0%} of these tasks were estimated. The other "
+            f"{len(assumed)} use a one-day default, so the dates below show the "
+            "right **order** of work but not a measured **duration**. Treat the "
+            "end date as provisional until the estimates are filled in."
+        )
+        with st.expander(f"Tasks running on the default ({len(assumed)})"):
+            for task in assumed:
+                st.markdown(f"- {task['title']} — {task['team']}")
+    elif coverage is not None:
+        st.caption(f"Every task carries an effort estimate ({coverage:.0%} coverage).")
+
+    milestones = timeline.get("milestones") or []
+    if milestones:
+        st.subheader("Against the SOW's own dates")
+        st.caption(
+            "The SOW commits to checkpoints between kickoff and go-live. Beating the "
+            "final deadline says nothing about these."
+        )
+        icons = {"late": "🔴", "early": "🟠", "on_track": "🟢", "unscheduled": "⚪"}
+        for m in milestones:
+            st.markdown(f"{icons.get(m['status'], '⚪')} {m['detail']}")
+        early = [m for m in milestones if m["status"] == "early"]
+        if early:
+            st.info(
+                f"{len(early)} milestone(s) land well before the agreed date. That is "
+                "usually a sign the work behind them was never estimated rather than "
+                "that the project is ahead."
+            )
+
+    calibration = timeline.get("calibration") or {}
+    steps = calibration.get("by_step") or []
+    if steps:
+        st.subheader("Estimates against the SOW's own windows")
+        st.caption(
+            "The SOW never states effort, but it does state the dates both parties "
+            "agreed the work must fit between. That is the only thing an estimate "
+            "here can be checked against."
+        )
+        rows = []
+        for step in steps:
+            fill = step["coverage"]
+            if fill is None:
+                verdict = "no window to compare"
+            elif fill < 0.6:
+                verdict = "⚠️ likely underestimated"
+            elif fill > 1.0:
+                verdict = "🔴 needs more time than agreed"
+            else:
+                verdict = "🟢 fits"
+            rows.append(
+                {
+                    "Step": step["name"],
+                    "SOW allows": step["allowed_days"],
+                    "Plan uses": step["planned_days"],
+                    "Fills": f"{fill:.0%}" if fill is not None else "-",
+                    "Verdict": verdict,
+                }
+            )
+        st.dataframe(rows, hide_index=True, width="stretch")
+        cov = calibration.get("coverage")
+        if cov is not None:
+            st.caption(
+                f"Across the whole timetable the plan fills {cov:.0%} of the agreed "
+                f"time ({calibration['planned_days']} of {calibration['allowed_days']} "
+                "working days). Read the steps rather than this number — a plan can "
+                "be short overall while running tight on individual steps."
+            )
+
     st.subheader("Critical path")
     st.caption(
         "These tasks have no slack. Any of them slipping pushes the whole "
@@ -294,6 +366,144 @@ def render_grounding(project_id: str) -> None:
         st.success("Every claim is supported by the SOW.")
 
 
+def render_structure(project_id: str) -> None:
+    """The plan as a tree: project, then what each team owns and must prove."""
+    structure = api("GET", f"/projects/{project_id}/structure")
+    if not structure:
+        return
+
+    totals = structure["totals"]
+    row = st.columns(5)
+    row[0].metric("Requirements", totals["requirements"])
+    row[1].metric("User stories", totals["user_stories"])
+    row[2].metric("Test cases", totals["test_cases"])
+    row[3].metric("Detail items", totals["detail_items"])
+    row[4].metric("Open questions", totals["open_questions"])
+
+    resting = totals["test_cases_resting_on_assumptions"]
+    if resting:
+        st.warning(
+            f"{resting} test case(s) expect values the SOW never stated. Running one "
+            "and seeing it pass proves the system matches an assumption, not the SOW."
+        )
+
+    for team, node in structure["teams"].items():
+        icon = TEAM_COLORS.get(team, "⚪")
+        with st.expander(
+            f"{icon} {team.title()} — {node['task_count']} task(s), "
+            f"{len(node['requirements'])} requirement(s)"
+        ):
+            if node["roles"]:
+                st.caption("**Roles**")
+                for role in node["roles"]:
+                    badge, _ = SOURCE_BADGES.get(role["source_status"], ("❓", ""))
+                    st.markdown(
+                        f"- {badge} **{role['title']}**"
+                        + (f" — {role['responsibility']}" if role["responsibility"] else "")
+                    )
+
+            if node["details"]:
+                st.caption("**What the SOW lists**")
+                for category, items in sorted(node["details"].items()):
+                    label = category.replace("_", " ").title()
+                    st.markdown(f"*{label}* ({len(items)})")
+                    for item in items:
+                        badge, _ = SOURCE_BADGES.get(item["source_status"], ("❓", ""))
+                        st.markdown(
+                            f"&nbsp;&nbsp;&nbsp;{badge} {item['name']}"
+                            + (f" — {item['description']}" if item["description"] else ""),
+                            unsafe_allow_html=True,
+                        )
+
+            if node["unlinked_tasks"]:
+                st.caption("**Tasks with no requirement behind them**")
+                for task in node["unlinked_tasks"]:
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;🔧 {task['title']} — "
+                        f"{task['assignee_role'] or 'unassigned'}",
+                        unsafe_allow_html=True,
+                    )
+
+            for requirement in node["requirements"]:
+                badge, _ = SOURCE_BADGES.get(requirement["source_status"], ("❓", ""))
+                st.markdown(
+                    f"---\n**{badge} {requirement['requirement_id']} — {requirement['title']}**"
+                )
+                for task in requirement["tasks"]:
+                    owner = task["assignee_role"] or "unassigned"
+                    due = f" · due {task['due_date']}" if task["due_date"] else ""
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;🔧 **{task['title']}** — "
+                        f"{task['team'].title()} · {owner}{due}",
+                        unsafe_allow_html=True,
+                    )
+                    if task["delivered_by_another_team"]:
+                        st.caption(
+                            f"↳ Delivered by the {task['team']} team, so its card is in the "
+                            f"**{task['team'].title()}** list on the board — not under "
+                            f"{team.title()}."
+                        )
+                if not requirement["tasks"]:
+                    st.caption("⚠️ No task delivers this requirement.")
+
+                if not requirement["user_stories"]:
+                    st.caption("No user stories derived for this requirement.")
+                for story in requirement["user_stories"]:
+                    st.markdown(f"> *{story['story_id']}* — {story['sentence']}")
+                    for criterion in story["acceptance_criteria"]:
+                        st.markdown(
+                            f"&nbsp;&nbsp;&nbsp;☐ {criterion['text']}", unsafe_allow_html=True
+                        )
+                    for case in story["test_cases"]:
+                        header = f"🧪 {case['case_id']} — {case['title']}"
+                        if case["rests_on_assumption"]:
+                            header += "  ·  ⚠️ rests on an assumption"
+                        with st.expander(header):
+                            if case["rests_on_assumption"]:
+                                st.warning(
+                                    "The expected result below depends on "
+                                    f"{', '.join(case['assumed_fields'])}, which the SOW "
+                                    "does not state. Confirm the value before treating a "
+                                    "pass as acceptance."
+                                )
+                            if case["preconditions"]:
+                                st.markdown(f"**Given** {case['preconditions']}")
+                            st.markdown(f"**When** {case['action']}")
+                            st.markdown(f"**Then** {case['expected_result']}")
+                            st.caption(case["kind"].replace("_", " "))
+
+
+def render_questions(project_id: str) -> None:
+    """What the SOW left unanswered, grouped by who can answer it."""
+    data = api("GET", f"/projects/{project_id}/questions")
+    if not data:
+        return
+    if not data["total"]:
+        st.success("The SOW answered every planning question.")
+        return
+
+    st.caption(
+        "Each of these is a field the SOW does not settle. The plan runs on the "
+        "working assumption shown until someone answers."
+    )
+    titles = {
+        "merchant": "Ask the merchant",
+        "offer": "Ask about the offers",
+        "project": "Settle internally",
+    }
+    for scope, questions in data["by_scope"].items():
+        if not questions:
+            continue
+        st.subheader(f"{titles.get(scope, scope.title())} ({len(questions)})")
+        for question in questions:
+            with st.expander(f"{question['question_id']} — {question['text']}"):
+                st.markdown(f"**Working assumption:** {question['working_assumption']}")
+                st.caption(
+                    f"{question['category']}"
+                    + (f" · {question['team']} team" if question["team"] else "")
+                )
+
+
 def render_project(project_id: str, projects: list[dict]) -> None:
     project = next((p for p in projects if p["id"] == project_id), None)
     if not project:
@@ -311,16 +521,35 @@ def render_project(project_id: str, projects: list[dict]) -> None:
     review = api("GET", f"/projects/{project_id}/review") or {"counts": {}, "ready": False}
     pending = review["counts"].get("pending", 0)
 
-    tasks_tab, timeline_tab, grounding_tab, assumptions_tab, audit_tab, approve_tab = st.tabs(
+    questions = api("GET", f"/projects/{project_id}/questions") or {"total": 0}
+
+    (
+        tasks_tab,
+        structure_tab,
+        timeline_tab,
+        grounding_tab,
+        assumptions_tab,
+        questions_tab,
+        audit_tab,
+        approve_tab,
+    ) = st.tabs(
         [
             f"Tasks ({pending} to review)" if pending else "Tasks",
+            "Structure",
             "Timeline",
             "Grounding",
             f"Assumptions ({len(assumptions)})",
+            f"Questions ({questions['total']})" if questions["total"] else "Questions",
             "Audit",
             "Approve & push",
         ]
     )
+
+    with structure_tab:
+        render_structure(project_id)
+
+    with questions_tab:
+        render_questions(project_id)
 
     with tasks_tab:
         if not tasks:
@@ -347,7 +576,10 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                         )
                     if task["description"]:
                         st.write(task["description"])
-                    st.caption(f"{meaning} · {task['estimated_hours'] or '?'}h estimated")
+                    owner = task.get("assignee_role") or "unassigned"
+                    st.caption(
+                        f"{meaning} · {owner} · {task['estimated_hours'] or '?'}h estimated"
+                    )
                     if task["start_date"]:
                         st.caption(f"Scheduled: {task['start_date']} → {task['due_date']}")
                     if task["depends_on"]:

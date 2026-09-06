@@ -174,3 +174,37 @@ def grounded_fields(findings: dict[str, FieldFinding]) -> dict[str, FieldFinding
         for key, finding in findings.items()
         if finding.status in _REQUIRES_EVIDENCE and finding.value
     }
+
+
+def build_questions(
+    findings: dict[str, FieldFinding], fields: list[FieldSpec] | None = None
+) -> list[dict]:
+    """Turn every unanswered field into a question worth asking.
+
+    An assumption and a question are the same fact seen from two sides: the
+    plan runs on the assumption, and the question is what would replace it.
+    Deriving one from the other means the question set can never drift from
+    what the plan actually assumed, and costs no model call.
+
+    A field the SOW settled produces no question, which is the point — nobody
+    should be asked to confirm something the document already states.
+    """
+    fields = fields or PLANNING_FIELDS
+    questions: list[dict] = []
+    for spec in fields:
+        finding = findings.get(spec.key)
+        if finding is None or finding.status != SourceStatus.ASSUMED:
+            continue
+        hint = finding.hint.strip()
+        questions.append(
+            {
+                "question_key": f"Q-{len(questions) + 1:03d}",
+                "scope": str(spec.scope),
+                "category": spec.category,
+                "field_key": spec.key,
+                "team": str(spec.team) if spec.team else "",
+                "text": spec.question,
+                "working_assumption": hint or spec.default,
+            }
+        )
+    return questions

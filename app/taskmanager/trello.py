@@ -14,28 +14,13 @@ import httpx
 
 from app.core.config import get_settings
 from app.taskmanager.base import BoardTask, TaskManagerInterface
+from app.taskmanager.labels import label_color
 
 logger = logging.getLogger(__name__)
 
 API = "https://api.trello.com/1"
 
 LISTS = ["Backlog", "Commercial", "Technical", "Operations", "Blocked", "Testing", "Done"]
-
-# Trello allows a fixed palette; map each label to a colour so a board is
-# readable at a glance.
-LABEL_COLORS = {
-    "TEAM-COMMERCIAL": "blue",
-    "TEAM-TECHNICAL": "purple",
-    "TEAM-OPERATIONS": "orange",
-    "PRIORITY-HIGH": "red",
-    "PRIORITY-MEDIUM": "yellow",
-    "PRIORITY-LOW": "lime",
-    "GROUNDED": "green",
-    "INFERRED": "sky",
-    "ASSUMED": "pink",
-    "REVIEW-REQUIRED": "black",
-}
-
 
 class TrelloError(RuntimeError):
     pass
@@ -91,7 +76,7 @@ class TrelloAdapter(TaskManagerInterface):
                 "POST",
                 "/labels",
                 name=name,
-                color=LABEL_COLORS.get(name, "light-gray"),
+                color=label_color(name),
                 idBoard=board_id,
             )
             existing[name] = created["id"]
@@ -117,8 +102,28 @@ class TrelloAdapter(TaskManagerInterface):
                 params["due"] = task.due_date.isoformat()
             card = self._request("POST", "/cards", **params)
             created[task.task_id] = card["id"]
+            self._add_checklists(card["id"], task)
             logger.info("Created Trello card %s for task %s", card["id"], task.task_id)
         return created
+
+    def _add_checklists(self, card_id: str, task: BoardTask) -> None:
+        """Attach the task's checklists to a card.
+
+        Trello has no field for acceptance criteria, but a checklist is the
+        right shape for them: one tickable line per condition, with Trello
+        keeping the completed count on the card front. Items are created one
+        call each, which is the only way the API offers.
+        """
+        for name, items in task.checklists():
+            checklist = self._request("POST", "/checklists", idCard=card_id, name=name)
+            for position, item in enumerate(items, start=1):
+                self._request(
+                    "POST",
+                    f"/checklists/{checklist['id']}/checkItems",
+                    name=item[:16384],
+                    pos=position,
+                    checked="false",
+                )
 
     def close(self) -> None:
         self.http.close()

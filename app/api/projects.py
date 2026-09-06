@@ -25,17 +25,25 @@ from app.llm.client import GeminiClient, LLMError
 from app.models import (
     Assumption,
     ClaimRecord,
+    ClarificationQuestion,
     LLMRequest,
     Project,
+    ProjectDetail,
+    ProjectMilestone,
+    ProjectRequirement,
+    ProjectRole,
     ProjectTask,
+    ProjectTestCase,
     SOWChunk,
     SOWDocument,
     SOWSection,
+    UserStory,
     ValidationLog,
 )
+from app.planning.milestones import calibrate, calibration_summary, check_milestones
 from app.planning.service import resolve_deadline, schedule_project
 from app.schemas.enums import ProjectStatus, ReviewStatus
-from app.taskmanager.base import BoardTask
+from app.taskmanager.base import BoardCase, BoardTask
 from app.taskmanager.trello import TrelloAdapter, TrelloError
 
 logger = logging.getLogger(__name__)
@@ -59,6 +67,7 @@ class TaskView(BaseModel):
     team: str
     priority: str
     status: str
+    assignee_role: str
     source_status: str
     source_section: str | None
     source_chunk_keys: list[str]
@@ -161,6 +170,7 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
         team=task.team,
         priority=task.priority,
         status=task.status,
+        assignee_role=task.assignee_role,
         source_status=task.source_status,
         source_section=section.title if section else None,
         source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
@@ -181,6 +191,227 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
 def list_tasks(project_id: str, db: Session = Depends(get_db)) -> list[TaskView]:
     tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project_id).all()
     return [_task_view(db, t) for t in tasks]
+
+
+def _artifacts_by_requirement(db: Session, project_id: str) -> dict[str, dict]:
+    """Acceptance-criteria counts and assumed test fields, keyed by requirement.
+
+    A task inherits these through the requirement it implements, which is the
+    only link between a unit of work and the tests that will judge it.
+    """
+    stories = (
+        db.query(UserStory)
+        .filter(UserStory.project_id == project_id, UserStory.requirement_id.isnot(None))
+        .all()
+    )
+    out: dict[str, dict] = {}
+    for story in stories:
+        entry = out.setdefault(
+            story.requirement_id, {"criteria": [], "assumed_fields": set(), "cases": []}
+        )
+        entry["criteria"].extend(c.text for c in story.acceptance_criteria)
+        for case in story.test_cases:
+            assumed = [f for f in case.assumed_fields.split(",") if f]
+            entry["assumed_fields"].update(assumed)
+            entry["cases"].append(
+                BoardCase(
+                    title=case.title,
+                    expected_result=case.expected_result,
+                    rests_on_assumption=case.rests_on_assumption,
+                    assumed_fields=assumed,
+                )
+            )
+    return out
+
+
+@router.get("/{project_id}/roles")
+def list_roles(project_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.query(ProjectRole).filter(ProjectRole.project_id == project_id).all()
+    return [
+        {
+            "team": r.team,
+            "role_title": r.role_title,
+            "responsibility": r.responsibility,
+            "headcount": r.headcount,
+            "source_status": r.source_status,
+            "source_chunk_keys": [k for k in r.source_chunk_keys.split(",") if k],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/{project_id}/questions")
+def list_questions(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """Open questions, grouped by who has to answer them."""
+    rows = (
+        db.query(ClarificationQuestion)
+        .filter(ClarificationQuestion.project_id == project_id)
+        .all()
+    )
+    grouped: dict[str, list[dict]] = {"merchant": [], "offer": [], "project": []}
+    for q in rows:
+        grouped.setdefault(q.scope, []).append(
+            {
+                "question_id": q.question_key,
+                "category": q.category,
+                "field_key": q.field_key,
+                "team": q.team,
+                "text": q.text,
+                "working_assumption": q.working_assumption,
+                "status": q.status,
+                "answer": q.answer,
+            }
+        )
+    return {
+        "counts": {scope: len(items) for scope, items in grouped.items()},
+        "total": len(rows),
+        "by_scope": grouped,
+    }
+
+
+@router.get("/{project_id}/structure")
+def project_structure(project_id: str, db: Session = Depends(get_db)) -> dict:
+    """The whole plan as one tree: project -> team -> what each team owns.
+
+    Served in a single response because the shape is the point — a caller
+    reassembling it from six endpoints would have to re-derive the grouping
+    rules the taxonomy already encodes.
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    requirements = (
+        db.query(ProjectRequirement).filter(ProjectRequirement.project_id == project_id).all()
+    )
+    stories = db.query(UserStory).filter(UserStory.project_id == project_id).all()
+    stories_by_requirement: dict[str, list[UserStory]] = {}
+    for story in stories:
+        stories_by_requirement.setdefault(story.requirement_id, []).append(story)
+
+    details = db.query(ProjectDetail).filter(ProjectDetail.project_id == project_id).all()
+    roles = db.query(ProjectRole).filter(ProjectRole.project_id == project_id).all()
+    tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project_id).all()
+
+    tasks_by_requirement: dict[str, list[ProjectTask]] = {}
+    unlinked: list[ProjectTask] = []
+    for task in tasks:
+        if task.requirement_id:
+            tasks_by_requirement.setdefault(task.requirement_id, []).append(task)
+        else:
+            unlinked.append(task)
+    questions = (
+        db.query(ClarificationQuestion)
+        .filter(ClarificationQuestion.project_id == project_id)
+        .all()
+    )
+
+    teams: dict[str, dict] = {}
+    for team in ("commercial", "technical", "operations"):
+        team_details: dict[str, list[dict]] = {}
+        for detail in (d for d in details if d.team == team):
+            team_details.setdefault(detail.category, []).append(
+                {
+                    "name": detail.name,
+                    "description": detail.description,
+                    "source_status": detail.source_status,
+                    "source_chunk_keys": [k for k in detail.source_chunk_keys.split(",") if k],
+                }
+            )
+        teams[team] = {
+            "roles": [
+                {
+                    "title": r.role_title,
+                    "responsibility": r.responsibility,
+                    "source_status": r.source_status,
+                }
+                for r in roles
+                if r.team == team
+            ],
+            "task_count": sum(1 for t in tasks if t.team == team),
+            "details": team_details,
+            "requirements": [
+                {
+                    "requirement_id": r.requirement_key,
+                    "title": r.title,
+                    "source_status": r.source_status,
+                    "source_chunk_keys": [k for k in r.source_chunk_keys.split(",") if k],
+                    # Which task actually delivers this, and where it ended up.
+                    # A requirement can be owned by one team and delivered by
+                    # another — an SLA is a commercial promise kept by
+                    # operations — and without this the reader goes looking for
+                    # a card in the wrong board column and concludes it is
+                    # missing.
+                    "tasks": [
+                        {
+                            "title": t.title,
+                            "team": t.team,
+                            "assignee_role": t.assignee_role,
+                            "due_date": t.due_date,
+                            "validation_status": t.validation_status,
+                            "delivered_by_another_team": t.team != r.team,
+                        }
+                        for t in tasks_by_requirement.get(r.id, [])
+                    ],
+                    "user_stories": [
+                        {
+                            "story_id": story.story_key,
+                            "sentence": story.sentence,
+                            "source_status": story.source_status,
+                            "acceptance_criteria": [
+                                {"criterion_id": c.criterion_key, "text": c.text}
+                                for c in story.acceptance_criteria
+                            ],
+                            "test_cases": [
+                                {
+                                    "case_id": case.case_key,
+                                    "title": case.title,
+                                    "preconditions": case.preconditions,
+                                    "action": case.action,
+                                    "expected_result": case.expected_result,
+                                    "kind": case.kind,
+                                    "rests_on_assumption": case.rests_on_assumption,
+                                    "assumed_fields": [
+                                        f for f in case.assumed_fields.split(",") if f
+                                    ],
+                                }
+                                for case in story.test_cases
+                            ],
+                        }
+                        for story in stories_by_requirement.get(r.id, [])
+                    ],
+                }
+                for r in requirements
+                if r.team == team
+            ],
+            "open_questions": sum(1 for q in questions if q.team == team and q.status == "open"),
+            # Work sitting on this team's board that no requirement explains.
+            "unlinked_tasks": [
+                {"title": t.title, "assignee_role": t.assignee_role}
+                for t in unlinked
+                if t.team == team
+            ],
+        }
+
+    cases = db.query(ProjectTestCase).filter(ProjectTestCase.project_id == project_id).all()
+    return {
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "merchant_name": project.merchant_name,
+            "status": project.status,
+        },
+        "totals": {
+            "requirements": len(requirements),
+            "tasks": len(tasks),
+            "user_stories": len(stories),
+            "test_cases": len(cases),
+            "test_cases_resting_on_assumptions": sum(1 for c in cases if c.rests_on_assumption),
+            "detail_items": len(details),
+            "open_questions": sum(1 for q in questions if q.status == "open"),
+        },
+        "teams": teams,
+    }
 
 
 @router.get("/{project_id}/assumptions")
@@ -214,6 +445,48 @@ def get_evidence(project_id: str, chunk_key: str, db: Session = Depends(get_db))
     }
 
 
+def _milestone_view(db: Session, project_id: str) -> list[dict]:
+    """Each SOW milestone against where the plan actually lands."""
+    rows = db.query(ProjectMilestone).filter(ProjectMilestone.project_id == project_id).all()
+    checks = check_milestones(
+        [(m.name, m.target_date, [(t.title, t.due_date) for t in m.tasks]) for m in rows]
+    )
+    return [
+        {
+            "name": c.name,
+            "target_date": c.target_date,
+            "projected_date": c.projected_date,
+            "variance_days": c.variance_days,
+            "status": c.status,
+            "detail": c.detail,
+            "tasks": c.task_titles,
+        }
+        for c in checks
+    ]
+
+
+def _calibration_view(db: Session, project_id: str, project_start: date) -> dict:
+    rows = db.query(ProjectMilestone).filter(ProjectMilestone.project_id == project_id).all()
+    checks = check_milestones(
+        [(m.name, m.target_date, [(t.title, t.due_date) for t in m.tasks]) for m in rows]
+    )
+    segments = calibrate(project_start, checks)
+    summary = calibration_summary(segments)
+    summary["by_step"] = [
+        {
+            "name": s.name,
+            "after": s.after,
+            "allowed_days": s.allowed_days,
+            "planned_days": s.planned_days,
+            "unaccounted_days": s.unaccounted_days,
+            "coverage": s.coverage,
+            "detail": s.detail,
+        }
+        for s in segments
+    ]
+    return summary
+
+
 @router.get("/{project_id}/timeline")
 def get_timeline(project_id: str, db: Session = Depends(get_db)) -> dict:
     """Recompute the schedule and report the critical path.
@@ -238,6 +511,20 @@ def get_timeline(project_id: str, db: Session = Depends(get_db)) -> dict:
         "deadline": deadline,
         "deadline_breach": schedule.deadline_breach,
         "warnings": warnings,
+        # How much of this schedule anybody actually estimated. Without it the
+        # dates read as though the work had been sized, when most of them may
+        # be the one-day default standing in for a missing estimate.
+        "estimate_coverage": schedule.estimate_coverage,
+        # The dates the SOW committed to along the way, not just the final one.
+        "milestones": _milestone_view(db, project_id),
+        # What the SOW's own windows say about the estimates inside them. The
+        # only calibration a SOW contains: it never states effort, but it does
+        # state the dates both parties agreed the work must fit between.
+        "calibration": _calibration_view(db, project_id, schedule.project_start or start),
+        "assumed_durations": [
+            {"task_id": t.task_id, "title": t.title, "team": t.team}
+            for t in schedule.assumed_durations
+        ],
         "critical_path": [
             {
                 "task_id": t.task_id,
@@ -246,6 +533,7 @@ def get_timeline(project_id: str, db: Session = Depends(get_db)) -> dict:
                 "start_date": t.start_date,
                 "due_date": t.due_date,
                 "duration_days": t.duration_days,
+                "duration_is_assumed": t.duration_is_assumed,
             }
             for t in schedule.critical_path
         ],
@@ -451,11 +739,13 @@ def push_to_task_manager(project_id: str, db: Session = Depends(get_db)) -> dict
         )
     tasks = [t for t in tasks if t.review_status != ReviewStatus.REJECTED]
 
+    derived = _artifacts_by_requirement(db, project_id)
     board_tasks = []
     for task in tasks:
         section = (
             db.get(SOWSection, task.source_sow_section_id) if task.source_sow_section_id else None
         )
+        artifacts = derived.get(task.requirement_id or "", {})
         board_tasks.append(
             BoardTask(
                 task_id=task.id,
@@ -465,8 +755,12 @@ def push_to_task_manager(project_id: str, db: Session = Depends(get_db)) -> dict
                 priority=task.priority,
                 status=task.status,
                 due_date=task.due_date,
+                assignee_role=task.assignee_role,
                 source_status=task.source_status,
                 validation_status=task.validation_status,
+                acceptance_criteria=artifacts.get("criteria", []),
+                assumed_test_fields=sorted(artifacts.get("assumed_fields", set())),
+                test_cases=artifacts.get("cases", []),
                 source_section=section.title if section else "",
                 source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
                 grounding_score=task.grounding_score,

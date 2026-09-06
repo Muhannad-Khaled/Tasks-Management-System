@@ -28,6 +28,14 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+milestone_tasks = Table(
+    "milestone_tasks",
+    Base.metadata,
+    Column("milestone_id", ForeignKey("project_milestones.id"), primary_key=True),
+    Column("task_id", ForeignKey("project_tasks.id"), primary_key=True),
+)
+
+
 task_dependencies = Table(
     "task_dependencies",
     Base.metadata,
@@ -62,6 +70,25 @@ class Project(Base):
     assumptions: Mapped[list[Assumption]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    requirements: Mapped[list[ProjectRequirement]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    roles: Mapped[list[ProjectRole]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    milestones: Mapped[list[ProjectMilestone]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    details: Mapped[list[ProjectDetail]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    questions: Mapped[list[ClarificationQuestion]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    user_stories: Mapped[list[UserStory]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    test_cases: Mapped[list[ProjectTestCase]] = relationship(cascade="all, delete-orphan")
     claims: Mapped[list[ClaimRecord]] = relationship(cascade="all, delete-orphan")
     validation_logs: Mapped[list[ValidationLog]] = relationship(cascade="all, delete-orphan")
     llm_requests: Mapped[list[LLMRequest]] = relationship(cascade="all, delete-orphan")
@@ -123,11 +150,22 @@ class ProjectTask(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     team: Mapped[str] = mapped_column(String(32))
     assignee: Mapped[str] = mapped_column(String(255), default="")
+    # The role that owns the task. `assignee` names a *person* and stays
+    # empty: the platform has no user directory, so inventing a name would
+    # be the one kind of hallucination it exists to prevent.
+    assignee_role: Mapped[str] = mapped_column(String(64), default="")
+    requirement_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_requirements.id"), nullable=True
+    )
     priority: Mapped[str] = mapped_column(String(16), default="medium")
     status: Mapped[str] = mapped_column(String(32), default="backlog")
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     estimated_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Where the duration came from. An effort estimate is not in the SOW and
+    # never will be, so it is an assumption by nature — and a schedule built on
+    # one must not present itself as though someone had measured the work.
+    estimate_source: Mapped[str] = mapped_column(String(16), default="assumed")
     source_status: Mapped[str] = mapped_column(String(16), default="explicit")
     source_sow_section_id: Mapped[str | None] = mapped_column(
         ForeignKey("sow_sections.id"), nullable=True
@@ -143,11 +181,107 @@ class ProjectTask(Base):
     regeneration_count: Mapped[int] = mapped_column(Integer, default=0)
 
     project: Mapped[Project] = relationship(back_populates="tasks")
+    requirement: Mapped[ProjectRequirement | None] = relationship(back_populates="tasks")
+    source_section: Mapped[SOWSection | None] = relationship()
     depends_on: Mapped[list[ProjectTask]] = relationship(
         secondary=task_dependencies,
         primaryjoin=id == task_dependencies.c.task_id,
         secondaryjoin=id == task_dependencies.c.depends_on_id,
     )
+
+
+class ProjectRequirement(Base):
+    """What the SOW says must be delivered, before it is broken into tasks.
+
+    Extraction has always produced these; nothing stored them, so the
+    SOW -> requirement -> task chain the platform is built on was broken at
+    its middle link and user stories had nothing to hang off.
+    """
+
+    __tablename__ = "project_requirements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_key: Mapped[str] = mapped_column(String(32))  # REQ-001
+    team: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(512))
+    description: Mapped[str] = mapped_column(Text, default="")
+    source_status: Mapped[str] = mapped_column(String(16), default="explicit")
+    source_sow_section_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sow_sections.id"), nullable=True
+    )
+    source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
+
+    project: Mapped[Project] = relationship(back_populates="requirements")
+    tasks: Mapped[list[ProjectTask]] = relationship(back_populates="requirement")
+    # Declared purely so the ORM knows a requirement must be deleted before the
+    # section it points at. Without it, deleting a project raises a foreign key
+    # violation on sow_sections.
+    source_section: Mapped[SOWSection | None] = relationship()
+
+
+class ProjectRole(Base):
+    """A role on the delivery team, and where it came from.
+
+    A SOW that names its team is believed and the rows are EXPLICIT; one that
+    does not gets the default roster, recorded as ASSUMED like any other gap.
+    """
+
+    __tablename__ = "project_roles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    team: Mapped[str] = mapped_column(String(32))
+    role_title: Mapped[str] = mapped_column(String(64))
+    responsibility: Mapped[str] = mapped_column(Text, default="")
+    headcount: Mapped[int] = mapped_column(Integer, default=1)
+    source_status: Mapped[str] = mapped_column(String(16), default="assumed")
+    source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
+
+    project: Mapped[Project] = relationship(back_populates="roles")
+
+
+class ProjectMilestone(Base):
+    """A date the SOW commits to, and the tasks that have to land by it.
+
+    Kept apart from Project.go_live_date because the dates in between are what
+    the timeline check was blind to: it asked only whether the plan beat the
+    final deadline, said yes, and passed a schedule that ignored every agreed
+    checkpoint along the way.
+    """
+
+    __tablename__ = "project_milestones"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    name: Mapped[str] = mapped_column(String(512))
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_status: Mapped[str] = mapped_column(String(16), default="explicit")
+    source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
+
+    project: Mapped[Project] = relationship(back_populates="milestones")
+    tasks: Mapped[list[ProjectTask]] = relationship(secondary=milestone_tasks)
+
+
+class ProjectDetail(Base):
+    """One item the SOW enumerates, with the team that owns its category.
+
+    `team` is denormalised from the category so the structure view and the
+    per-team queries do not have to import the taxonomy to group rows.
+    """
+
+    __tablename__ = "project_details"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    category: Mapped[str] = mapped_column(String(48), index=True)
+    team: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(512))
+    description: Mapped[str] = mapped_column(Text, default="")
+    source_status: Mapped[str] = mapped_column(String(16), default="explicit")
+    source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
+
+    project: Mapped[Project] = relationship(back_populates="details")
 
 
 class Assumption(Base):
@@ -164,6 +298,116 @@ class Assumption(Base):
     created_by: Mapped[str] = mapped_column(String(64), default="system")
 
     project: Mapped[Project] = relationship(back_populates="assumptions")
+
+
+class UserStory(Base):
+    """A requirement restated as something a person wants to be able to do.
+
+    Never EXPLICIT: a story is a restatement, so its provenance is inherited
+    from the requirement it came from rather than claimed on its own.
+    """
+
+    __tablename__ = "user_stories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_requirements.id"), nullable=True
+    )
+    story_key: Mapped[str] = mapped_column(String(32))  # US-001
+    team: Mapped[str] = mapped_column(String(32), index=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    capability: Mapped[str] = mapped_column(Text)
+    benefit: Mapped[str] = mapped_column(Text, default="")
+    source_status: Mapped[str] = mapped_column(String(16), default="inferred")
+    source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
+    # True when the actor is one of our own delivery roles. Such a story is a
+    # task in disguise — it describes work rather than value, so no one outside
+    # the project can say whether it is done.
+    actor_is_delivery_side: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    project: Mapped[Project] = relationship(back_populates="user_stories")
+    requirement: Mapped[ProjectRequirement | None] = relationship()
+    acceptance_criteria: Mapped[list[AcceptanceCriterion]] = relationship(
+        back_populates="user_story", cascade="all, delete-orphan"
+    )
+    test_cases: Mapped[list[ProjectTestCase]] = relationship(
+        back_populates="user_story", cascade="all, delete-orphan"
+    )
+
+    @property
+    def sentence(self) -> str:
+        return f"As a {self.actor}, I want {self.capability} so that {self.benefit}"
+
+
+class AcceptanceCriterion(Base):
+    __tablename__ = "acceptance_criteria"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_story_id: Mapped[str] = mapped_column(ForeignKey("user_stories.id"))
+    criterion_key: Mapped[str] = mapped_column(String(32))  # AC-001
+    text: Mapped[str] = mapped_column(Text)
+
+    user_story: Mapped[UserStory] = relationship(back_populates="acceptance_criteria")
+
+
+class ProjectTestCase(Base):
+    """A check someone will actually run, and what it is standing on.
+
+    `rests_on_assumption` is the reason this table exists rather than a list in
+    a description. A case asserting "$100 earns 1,000 points" against an earn
+    rate the platform assumed would let a QA engineer sign off a number nobody
+    ever specified, and that verdict has to travel with the case everywhere it
+    is shown.
+    """
+
+    __tablename__ = "test_cases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    user_story_id: Mapped[str | None] = mapped_column(
+        ForeignKey("user_stories.id"), nullable=True
+    )
+    case_key: Mapped[str] = mapped_column(String(32))  # TC-001
+    title: Mapped[str] = mapped_column(String(512))
+    preconditions: Mapped[str] = mapped_column(Text, default="")
+    action: Mapped[str] = mapped_column(Text, default="")
+    expected_result: Mapped[str] = mapped_column(Text, default="")
+    kind: Mapped[str] = mapped_column(String(32), default="functional")
+    rests_on_assumption: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Which planning fields, so the warning can name them.
+    assumed_fields: Mapped[str] = mapped_column(Text, default="")
+
+    user_story: Mapped[UserStory | None] = relationship(back_populates="test_cases")
+
+
+class ClarificationQuestion(Base):
+    """Something the SOW left unanswered, phrased as a question to ask.
+
+    These are not generated: every ASSUMED planning field already *is* a
+    question the document failed to settle, and FieldSpec already carries the
+    wording. So the question set is a projection of the assumption engine's
+    output rather than another model call — cheaper, and it cannot ask about
+    something the SOW actually answered.
+    """
+
+    __tablename__ = "clarification_questions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    question_key: Mapped[str] = mapped_column(String(32))  # Q-001
+    scope: Mapped[str] = mapped_column(String(16), index=True)  # merchant | offer | project
+    category: Mapped[str] = mapped_column(String(64))
+    field_key: Mapped[str] = mapped_column(String(64))
+    team: Mapped[str] = mapped_column(String(32), default="")
+    text: Mapped[str] = mapped_column(Text)
+    # What the plan currently runs on while the question is unanswered, so the
+    # reader can see the cost of leaving it open.
+    working_assumption: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open | answered
+    answer: Mapped[str] = mapped_column(Text, default="")
+
+    project: Mapped[Project] = relationship(back_populates="questions")
 
 
 class ClaimRecord(Base):

@@ -1,8 +1,17 @@
 """Test helpers: corpus paths and the LLM test double."""
 
 import re
+from datetime import date
 from pathlib import Path
 
+from app.schemas.artifacts import (
+    DraftAcceptanceCriterion,
+    DraftTestCase,
+    DraftUserStory,
+    TechnicalArtifacts,
+    TestKind,
+)
+from app.schemas.details import DetailCategory
 from app.schemas.enums import SourceStatus
 from app.schemas.fields import PLANNING_FIELDS
 from app.schemas.gaps import FieldFinding, GapReport
@@ -16,7 +25,10 @@ from app.schemas.grounding import (
 )
 from app.schemas.sow import (
     ExtractedAssumption,
+    ExtractedDetail,
+    ExtractedMilestone,
     ExtractedRequirement,
+    ExtractedRole,
     ExtractedTask,
     ProjectInfo,
     StructuredSOW,
@@ -32,8 +44,12 @@ class StubLLM:
     which is how the invented-citation guard is exercised.
     """
 
-    def __init__(self, citations: list[str] | None = None):
+    def __init__(self, citations: list[str] | None = None, roster: bool = False):
         self.citations = citations if citations is not None else []
+        # Most SOWs do not name their team, so the default stub returns no
+        # roster and the default one is assumed. `roster=True` exercises the
+        # other path.
+        self.roster = roster
         self.calls: list[dict] = []
 
     def generate_structured(self, prompt, schema, **kwargs):
@@ -44,7 +60,95 @@ class StubLLM:
             return self._batch_claims(kwargs.get("tasks", ""))
         if schema is GroundingJudgement:
             return self._judgement(kwargs.get("claims", ""))
+        if schema is TechnicalArtifacts:
+            return self._artifacts()
         return self._extraction()
+
+    def _artifacts(self) -> TechnicalArtifacts:
+        """One story per requirement, covering the cases that matter.
+
+        US-002 carries a test case resting on the earn rate, which the stub's
+        gap report reports as assumed — that is the pairing the
+        rests_on_assumption flag exists to catch.
+        """
+        return TechnicalArtifacts(
+            stories=[
+                DraftUserStory(
+                    story_key="US-001",
+                    requirement_id="REQ-001",
+                    actor="merchant",
+                    capability="have a countersigned commercial contract in place",
+                    benefit="integration work can begin",
+                    acceptance_criteria=[
+                        DraftAcceptanceCriterion(
+                            criterion_key="AC-001", text="Both parties have signed."
+                        ),
+                        DraftAcceptanceCriterion(
+                            criterion_key="AC-002", text="The signed copy is filed."
+                        ),
+                    ],
+                    test_cases=[
+                        DraftTestCase(
+                            case_key="TC-001",
+                            title="Contract is countersigned",
+                            action="Open the contract record",
+                            expected_result="Status reads countersigned",
+                        )
+                    ],
+                ),
+                DraftUserStory(
+                    story_key="US-002",
+                    requirement_id="REQ-002",
+                    actor="customer",
+                    capability="earn points on a purchase",
+                    benefit="I am rewarded for shopping",
+                    acceptance_criteria=[
+                        DraftAcceptanceCriterion(
+                            criterion_key="AC-003",
+                            text="Points appear on the account within 5 seconds.",
+                        )
+                    ],
+                    test_cases=[
+                        DraftTestCase(
+                            case_key="TC-002",
+                            title="Points accrue at the stated rate",
+                            preconditions="An enrolled customer at a live till",
+                            action="Complete a 100 USD purchase",
+                            expected_result="The account is credited with 1000 points",
+                            depends_on_fields=["earn_rate"],
+                        ),
+                        DraftTestCase(
+                            case_key="TC-003",
+                            title="Accrual endpoint responds",
+                            action="Call the accrual endpoint",
+                            expected_result="A success response is returned",
+                            kind=TestKind.TECHNICAL_VALIDATION,
+                            depends_on_fields=["not_a_real_field"],
+                        ),
+                    ],
+                ),
+                DraftUserStory(
+                    story_key="US-003",
+                    requirement_id="REQ-003",
+                    actor="merchant store manager",
+                    capability="have my account and offers configured",
+                    benefit="my branches can go live",
+                    acceptance_criteria=[
+                        DraftAcceptanceCriterion(
+                            criterion_key="AC-004", text="Every offer is configured."
+                        )
+                    ],
+                    test_cases=[
+                        DraftTestCase(
+                            case_key="TC-004",
+                            title="Offers are configured",
+                            action="Open the merchant configuration",
+                            expected_result="All offers are listed as active",
+                        )
+                    ],
+                ),
+            ]
+        )
 
     def _batch_claims(self, rendered_tasks: str) -> BatchClaimSet:
         """Two claims per task: one qualitative, one quantitative."""
@@ -126,6 +230,54 @@ class StubLLM:
                 project_name="Loyalty Program - CairoMart",
                 merchant_name="CairoMart Retail Group",
             ),
+            team_roster=(
+                [
+                    ExtractedRole(
+                        title="Integration Architect",
+                        team="technical",
+                        responsibility="Integration design",
+                        source_status="explicit",
+                        source_chunk_keys=self.citations,
+                    )
+                ]
+                if self.roster
+                else []
+            ),
+            details=[
+                ExtractedDetail(
+                    category=DetailCategory.OFFER,
+                    name="Double points weekend",
+                    source_status="explicit",
+                    source_chunk_keys=self.citations,
+                ),
+                ExtractedDetail(
+                    category=DetailCategory.API,
+                    name="Points accrual endpoint",
+                    description="POST /points/accrue",
+                    source_status="explicit",
+                    source_chunk_keys=self.citations,
+                ),
+                ExtractedDetail(
+                    category=DetailCategory.SYSTEM_CONFIGURATION,
+                    name="Merchant configuration",
+                    source_status="inferred",
+                    source_chunk_keys=self.citations,
+                ),
+            ],
+            milestones=[
+                ExtractedMilestone(
+                    name="Contract signed",
+                    target_date=date(2026, 10, 2),
+                    source_status="explicit",
+                    source_chunk_keys=self.citations,
+                ),
+                ExtractedMilestone(
+                    name="Go-live",
+                    target_date=date(2026, 12, 1),
+                    source_status="explicit",
+                    source_chunk_keys=self.citations,
+                ),
+            ],
             requirements=[
                 ExtractedRequirement(
                     requirement_id="REQ-001",
@@ -133,11 +285,28 @@ class StubLLM:
                     title="Countersign the commercial contract",
                     source_status="explicit",
                     source_chunk_keys=self.citations,
-                )
+                ),
+                ExtractedRequirement(
+                    requirement_id="REQ-002",
+                    team="technical",
+                    title="Integrate with the merchant POS",
+                    source_status="explicit",
+                    source_chunk_keys=self.citations,
+                ),
+                ExtractedRequirement(
+                    requirement_id="REQ-003",
+                    team="operations",
+                    title="Configure merchants and offers",
+                    source_status="inferred",
+                    source_chunk_keys=self.citations,
+                ),
             ],
             tasks=[
                 ExtractedTask(
                     task_id="T-001",
+                    milestone="Contract signed",
+                    requirement_id="REQ-001",
+                    assignee_role="Commercial Manager",
                     team="commercial",
                     title="Finalize merchant contract",
                     description="Countersign before integration starts.",
@@ -148,6 +317,9 @@ class StubLLM:
                 ),
                 ExtractedTask(
                     task_id="T-002",
+                    milestone="Go-live",
+                    requirement_id="REQ-002",
+                    assignee_role="Backend Engineer",
                     team="technical",
                     title="Develop POS API integration",
                     description="REST integration for points accrual.",
@@ -159,6 +331,9 @@ class StubLLM:
                 ),
                 ExtractedTask(
                     task_id="T-003",
+                    milestone="Go-live",
+                    requirement_id="REQ-003",
+                    assignee_role="Operations Specialist",
                     team="operations",
                     title="Configure merchant and offers",
                     priority="medium",

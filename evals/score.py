@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,10 +32,16 @@ from app.llm.client import GeminiClient
 from app.models import (
     Assumption,
     ClaimRecord,
+    ClarificationQuestion,
     Project,
+    ProjectDetail,
+    ProjectRequirement,
+    ProjectRole,
     ProjectTask,
+    ProjectTestCase,
     SOWChunk,
     SOWDocument,
+    UserStory,
     ValidationLog,
 )
 from app.schemas.enums import ProjectStatus
@@ -42,10 +49,13 @@ from app.schemas.enums import ProjectStatus
 CORPUS = Path(__file__).parent.parent / "data" / "sample_sows"
 GOLD = CORPUS / "gold"
 
+# sow_c_glowbeauty is deliberately left out of the eval run, not deleted. It is
+# still the corpus's adversarial document and still the only DOCX the parsing
+# tests exercise; it is simply not scored here, which keeps a full run to two
+# documents and ten calls against a 20/day quota. Put the line back to score it.
 DOCS = [
     ("sow_a_cairomart", "SOW-EV-A"),
     ("sow_b_quickbite", "SOW-EV-B"),
-    ("sow_c_glowbeauty", "SOW-EV-C"),
 ]
 
 # Words that identify a gold requirement area in a generated task title.
@@ -86,6 +96,18 @@ class DocScore:
     unsupported_examples: list[str] = field(default_factory=list)
     task_verdicts: dict[str, int] = field(default_factory=dict)
     validation_failures: list[str] = field(default_factory=list)
+    # Assignment and the derived layer (S1-S5)
+    tasks_with_a_role: int = 0
+    tasks_linked_to_a_requirement: int = 0
+    roles_off_roster: list[str] = field(default_factory=list)
+    requirements: int = 0
+    detail_items: int = 0
+    questions_by_scope: dict[str, int] = field(default_factory=dict)
+    user_stories: int = 0
+    stories_claiming_to_be_explicit: list[str] = field(default_factory=list)
+    test_cases: int = 0
+    cases_resting_on_assumptions: int = 0
+    cases_asserting_an_unexplained_number: list[str] = field(default_factory=list)
 
     @property
     def grounding_score(self) -> float | None:
@@ -104,6 +126,32 @@ class DocScore:
         if not self.quantitative_claims:
             return None
         return self.quantitative_supported / self.quantitative_claims
+
+    @property
+    def assignment_rate(self) -> float:
+        """Share of tasks that reached a named role."""
+        return self.tasks_with_a_role / self.tasks if self.tasks else 0.0
+
+    @property
+    def requirement_link_rate(self) -> float:
+        """Share of tasks traceable back to a requirement.
+
+        The SOW -> requirement -> task chain is the platform's whole claim; a
+        task outside it cannot be explained to anyone.
+        """
+        return self.tasks_linked_to_a_requirement / self.tasks if self.tasks else 0.0
+
+    @property
+    def assumption_disclosure(self) -> float | None:
+        """Share of test cases that name what they stand on.
+
+        A case asserting a number it cannot account for is the worst output
+        this system can produce: it looks like acceptance and is not.
+        """
+        if not self.test_cases:
+            return None
+        unexplained = len(self.cases_asserting_an_unexplained_number)
+        return (self.test_cases - unexplained) / self.test_cases
 
     @property
     def task_coverage(self) -> float:
@@ -143,10 +191,65 @@ def _gap_terms(gold: dict) -> dict[str, list[str]]:
     return terms
 
 
+def _score_derived_layer(db, project: Project, score: DocScore) -> None:
+    """Measure assignment and the derived artifacts."""
+    tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project.id).all()
+    roles = db.query(ProjectRole).filter(ProjectRole.project_id == project.id).all()
+    roster = {(r.team, r.role_title.casefold()) for r in roles}
+
+    score.tasks_with_a_role = sum(1 for t in tasks if t.assignee_role)
+    score.tasks_linked_to_a_requirement = sum(1 for t in tasks if t.requirement_id)
+    score.roles_off_roster = sorted(
+        {
+            f"{t.team}/{t.assignee_role}"
+            for t in tasks
+            if t.assignee_role and (t.team, t.assignee_role.casefold()) not in roster
+        }
+    )
+
+    score.requirements = (
+        db.query(ProjectRequirement)
+        .filter(ProjectRequirement.project_id == project.id)
+        .count()
+    )
+    score.detail_items = (
+        db.query(ProjectDetail).filter(ProjectDetail.project_id == project.id).count()
+    )
+
+    questions = (
+        db.query(ClarificationQuestion)
+        .filter(ClarificationQuestion.project_id == project.id)
+        .all()
+    )
+    score.questions_by_scope = dict(Counter(q.scope for q in questions))
+
+    stories = db.query(UserStory).filter(UserStory.project_id == project.id).all()
+    score.user_stories = len(stories)
+    # A story is a restatement. Claiming the SOW stated it outright would mean
+    # the inheritance rule had been bypassed somewhere.
+    score.stories_claiming_to_be_explicit = [
+        s.story_key for s in stories if s.source_status == "explicit"
+    ]
+
+    cases = (
+        db.query(ProjectTestCase).filter(ProjectTestCase.project_id == project.id).all()
+    )
+    score.test_cases = len(cases)
+    score.cases_resting_on_assumptions = sum(1 for c in cases if c.rests_on_assumption)
+    score.cases_asserting_an_unexplained_number = [
+        c.case_key
+        for c in cases
+        if any(ch.isdigit() for ch in c.expected_result or "")
+        and not c.assumed_fields
+        and not (c.user_story and c.user_story.source_chunk_keys)
+    ]
+
+
 def score_document(db, project: Project, gold: dict) -> DocScore:
     tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project.id).all()
     assumptions = db.query(Assumption).filter(Assumption.project_id == project.id).all()
     score = DocScore(doc=gold["doc"], profile=gold["profile"], tasks=len(tasks))
+    _score_derived_layer(db, project, score)
 
     titles = " ".join(f"{t.title} {t.description}".lower() for t in tasks)
     for area in sorted(_expected_areas(gold)):
@@ -287,6 +390,24 @@ def main() -> None:
             )
         print("\ngrnd = claims supported by the SOW; num = the same for claims asserting numbers")
 
+        header = (
+            f"\n{'document':22s} {'role':>6s} {'req':>6s} {'told':>6s} "
+            f"{'stories':>8s} {'cases':>6s} {'onasm':>6s}"
+        )
+        print(header)
+        print("-" * (len(header) - 1))
+        for s in scores:
+            print(
+                f"{s.doc:22s} {pct(s.assignment_rate)} {pct(s.requirement_link_rate)} "
+                f"{pct(s.assumption_disclosure)} {s.user_stories:8d} {s.test_cases:6d} "
+                f"{s.cases_resting_on_assumptions:6d}"
+            )
+        print(
+            "role = tasks assigned to a role; req = tasks traceable to a requirement"
+            "\ntold = test cases that account for the numbers they assert; "
+            "onasm = cases resting on an assumed value"
+        )
+
         print("\ndetail")
         for s in scores:
             print(f"\n  {s.doc} ({s.profile})")
@@ -305,6 +426,22 @@ def main() -> None:
                 print(f"    assumptions    : {len(s.assumptions_found)}/{len(s.assumptions_expected)}")
                 if missing:
                     print(f"    gaps unflagged : {', '.join(sorted(missing))}")
+            print(
+                f"    structure      : {s.requirements} requirement(s), "
+                f"{s.detail_items} detail item(s), questions {s.questions_by_scope}"
+            )
+            if s.roles_off_roster:
+                print(f"    off roster     : {', '.join(s.roles_off_roster)}")
+            if s.stories_claiming_to_be_explicit:
+                print(
+                    "    BAD provenance : stories claiming the SOW stated them outright: "
+                    f"{', '.join(s.stories_claiming_to_be_explicit)}"
+                )
+            if s.cases_asserting_an_unexplained_number:
+                print(
+                    "    unaccounted    : cases asserting a number with no evidence and "
+                    f"no named assumption: {', '.join(s.cases_asserting_an_unexplained_number)}"
+                )
             for failure in s.validation_failures:
                 print(f"    validation     : {failure[:96]}")
             if s.contradicted:

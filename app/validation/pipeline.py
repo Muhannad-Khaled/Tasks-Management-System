@@ -14,18 +14,33 @@ rather than finding a shorter plan with no explanation.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
 from app.grounding.engine import GroundingStatus, TaskGrounding, project_grounding_score
-from app.models import ProjectTask, SOWChunk, ValidationLog
+from app.models import (
+    ProjectMilestone,
+    ProjectTask,
+    ProjectTestCase,
+    SOWChunk,
+    UserStory,
+    ValidationLog,
+)
 from app.planning.dependencies import build_dependency_graph
+from app.planning.milestones import check_milestones, milestone_summary
 from app.schemas.enums import Team
 
 logger = logging.getLogger(__name__)
 
 VALIDATOR_VERSION = "v1"
+
+_NUMBER = re.compile(r"\d")
+
+
+def _asserts_a_number(text: str) -> bool:
+    return bool(_NUMBER.search(text or ""))
 
 # Words that signal a task belongs to a particular team. Used to catch an item
 # filed under the wrong team, which would send it to the wrong Trello list and
@@ -179,6 +194,39 @@ def validate_dependencies(tasks: list[ProjectTask]) -> StageResult:
     )
 
 
+def validate_milestones(db: Session, project_id: str) -> StageResult:
+    """The plan must answer to the dates in between, not just the final one.
+
+    Checking only the deadline passes a schedule that finishes six weeks early
+    because nobody estimated the work — every agreed checkpoint missed, in the
+    direction that looks like good news.
+    """
+    rows = db.query(ProjectMilestone).filter(ProjectMilestone.project_id == project_id).all()
+    if not rows:
+        return StageResult(
+            stage="milestones",
+            passed=True,
+            detail="the SOW states no intermediate milestones",
+        )
+
+    checks = check_milestones(
+        [(m.name, m.target_date, [(t.title, t.due_date) for t in m.tasks]) for m in rows]
+    )
+    summary = milestone_summary(checks)
+    messages = summary["breaches"] + summary["warnings"]
+    return StageResult(
+        stage="milestones",
+        # Only a late milestone fails: it breaks what was agreed. Finishing
+        # early is a signal about the estimates, not a broken promise.
+        passed=not summary["breaches"],
+        detail=(
+            f"{summary['on_track']}/{summary['total']} on track, "
+            f"{summary['late']} late, {summary['early']} far early"
+            + ("; " + "; ".join(messages[:3]) if messages else "")
+        ),
+    )
+
+
 def validate_timeline(tasks: list[ProjectTask], deadline) -> StageResult:
     """The schedule must satisfy the SOW's own deadline (brief section 15)."""
     due_dates = [t.due_date for t in tasks if t.due_date]
@@ -203,6 +251,96 @@ def validate_timeline(tasks: list[ProjectTask], deadline) -> StageResult:
     )
 
 
+def validate_derived_artifacts(db: Session, project_id: str) -> StageResult:
+    """Check the derived layer holds together and declares what it stands on.
+
+    Deterministic on purpose. A user story is a restatement, so judging it with
+    the model would score a legitimate derivation as unsupported; what can be
+    checked without one is that nothing is orphaned and that no test asserting
+    a number hides where the number came from.
+    """
+    stories = db.query(UserStory).filter(UserStory.project_id == project_id).all()
+    cases = db.query(ProjectTestCase).filter(ProjectTestCase.project_id == project_id).all()
+    if not stories and not cases:
+        return StageResult(
+            stage="derived_artifacts", passed=True, detail="no derived artifacts to check"
+        )
+
+    problems: list[str] = []
+    orphans = [s.story_key for s in stories if s.requirement_id is None]
+    if orphans:
+        problems.append(f"{len(orphans)} story(s) not linked to a requirement")
+
+    storyless = [c.case_key for c in cases if c.user_story_id is None]
+    if storyless:
+        problems.append(f"{len(storyless)} test case(s) not linked to a story")
+
+    criterionless = [s.story_key for s in stories if not s.acceptance_criteria]
+    if criterionless:
+        problems.append(f"{len(criterionless)} story(s) with no acceptance criteria")
+
+    # "As a support agent, I want to deliver training" is a task wearing a user
+    # story's grammar. It cannot be accepted by anyone outside the project.
+    inward = [s.story_key for s in stories if s.actor_is_delivery_side]
+    if inward:
+        problems.append(
+            f"{len(inward)} story(s) written from the delivery team's point of view "
+            f"rather than a user's: {inward[:3]}"
+        )
+
+    # A number in an expected result either traces to the SOW or names the
+    # assumption it came from. Silence is the failure mode that matters: it
+    # reads as fact and gets signed off as one.
+    unexplained = [
+        c.case_key
+        for c in cases
+        if _asserts_a_number(c.expected_result)
+        and not c.assumed_fields
+        and not (c.user_story and c.user_story.source_chunk_keys)
+    ]
+    if unexplained:
+        problems.append(
+            f"{len(unexplained)} test case(s) assert a number with neither evidence "
+            f"nor a named assumption: {unexplained[:3]}"
+        )
+
+    resting = [c.case_key for c in cases if c.rests_on_assumption]
+    return StageResult(
+        stage="derived_artifacts",
+        passed=not problems,
+        detail=(
+            "; ".join(problems)
+            if problems
+            else (
+                f"{len(stories)} story(s), {len(cases)} test case(s); "
+                f"{len(resting)} rest on an assumed value"
+            )
+        ),
+    )
+
+
+def record_stage(db: Session, project_id: str, stage: StageResult) -> None:
+    """Append one stage's outcome, replacing any earlier run of that stage.
+
+    Used by stages that run outside run_validation, which wipes the log before
+    writing its own.
+    """
+    db.query(ValidationLog).filter(
+        ValidationLog.project_id == project_id, ValidationLog.stage == stage.stage
+    ).delete()
+    db.add(
+        ValidationLog(
+            project_id=project_id,
+            stage=stage.stage,
+            passed=stage.passed,
+            detail=stage.detail,
+            grounding_score=stage.grounding_score,
+            validator_version=VALIDATOR_VERSION,
+        )
+    )
+    db.commit()
+
+
 def run_validation(
     db: Session,
     project_id: str,
@@ -218,6 +356,7 @@ def run_validation(
             validate_business_rules(tasks),
             validate_dependencies(tasks),
             validate_timeline(tasks, deadline),
+            validate_milestones(db, project_id),
         ]
     )
 

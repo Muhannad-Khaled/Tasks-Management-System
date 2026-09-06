@@ -68,24 +68,43 @@ def _no_embedding(monkeypatch):
     monkeypatch.setattr("app.graph.workflow.search", None)
 
 
+# Children before parents. A table missing here does not fail loudly: its rows
+# survive, the DELETE of whatever they reference raises, and the cleanup dies
+# mid-way. Add new tables to this list when they gain a foreign key.
+_CLEANUP_ORDER = [
+    "acceptance_criteria",
+    "test_cases",
+    "user_stories",
+    "claims",
+    "validation_logs",
+    "milestone_tasks",
+    "task_dependencies",
+    "project_tasks",
+    "project_requirements",
+    "project_roles",
+    "project_details",
+    "project_milestones",
+    "assumptions",
+    "clarification_questions",
+    "sow_chunks",
+    "sow_sections",
+    "sow_documents",
+    "llm_requests",
+    "projects",
+]
+
+
 @pytest.fixture
 def db():
     session = SessionLocal()
-    yield session
-    session.rollback()
-    # Order respects foreign keys.
-    for table in [
-        "claims",
-        "validation_logs",
-        "task_dependencies",
-        "project_tasks",
-        "assumptions",
-        "sow_chunks",
-        "sow_sections",
-        "sow_documents",
-        "llm_requests",
-        "projects",
-    ]:
-        session.execute(text(f"DELETE FROM {table}"))
-    session.commit()
-    session.close()
+    try:
+        yield session
+        session.rollback()
+        for table in _CLEANUP_ORDER:
+            session.execute(text(f"DELETE FROM {table}"))
+        session.commit()
+    finally:
+        # Without this, a failing DELETE leaves the connection open in an
+        # aborted transaction holding locks, and the *next* run's drop_all
+        # blocks on them forever. One broken test then looks like a hung suite.
+        session.close()

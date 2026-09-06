@@ -7,6 +7,14 @@ class Team(StrEnum):
     OPERATIONS = "operations"
 
 
+class FieldScope(StrEnum):
+    """Who an unanswered planning field is a question for."""
+
+    MERCHANT = "merchant"
+    OFFER = "offer"
+    PROJECT = "project"
+
+
 class SourceStatus(StrEnum):
     """Provenance of a piece of information (brief section 2)."""
 

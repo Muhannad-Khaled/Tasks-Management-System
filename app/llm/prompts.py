@@ -42,7 +42,7 @@ Hard rules:
 
 SOW_EXTRACTION = Prompt(
     name="sow_extraction",
-    version="v1",
+    version="v7",
     system=_GROUNDING_RULES,
     template="""Extract a structured project plan from the SOW below.
 
@@ -55,14 +55,62 @@ square brackets, e.g. [SOW-001-S04-C02]. Use those exact keys when citing.
 
 Produce:
 1. project_info: name, merchant, and any dates the SOW states.
-2. requirements: what must be delivered, each assigned to exactly one team
-   (commercial, technical, or operations).
-3. tasks: concrete units of work implementing those requirements. Give each a
-   stable id (T-001, T-002, ...), a team, a priority, an effort estimate in
-   hours, and any depends_on task ids. Cross-team dependencies matter: a
-   technical integration usually depends on the commercial contract, and
-   operations configuration usually depends on technical validation.
-4. assumptions: every gap you filled, with a reason and a confidence score.
+2. team_roster: the delivery roles the SOW names, with the team each belongs
+   to and what it is responsible for. Cite the chunk keys that name them.
+   If the SOW does not describe the team at all, return an empty roster —
+   do NOT populate it from the guide below, which exists only to name the
+   roles tasks may be assigned to.
+3. requirements: what must be delivered, each assigned to exactly one team
+   (commercial, technical, or operations). Give each a stable id
+   (REQ-001, REQ-002, ...).
+4. milestones: every dated checkpoint the SOW commits to between kickoff
+   and go-live — usually a table of milestones with dates and owners. Extract
+   these BEFORE sizing any task, because they are the windows the estimates
+   have to fit. Take the dates exactly as written and cite the chunk that
+   states them. If the SOW gives no intermediate dates, return an empty list
+   rather than inventing checkpoints.
+5. tasks: concrete units of work implementing those requirements. Give each a
+   stable id (T-001, T-002, ...), a team, a priority, the requirement_id it
+   implements, any depends_on task ids, and the milestone it contributes to
+   (named exactly as you listed it above, or empty if none).
+   Every task needs estimated_hours: the person-hours the work itself takes,
+   not counting time spent waiting for another team. A SOW almost never states
+   this, so judge it from the work described and give a real number — a
+   contract countersignature is not the same size as building an API.
+
+   Anchor those numbers to the dates the SOW does give. Where it states
+   milestones — "technical integration complete by 10 November", "staff
+   training complete by 27 November" — the working days from one milestone to
+   the next are the time both parties agreed that stretch of work would take.
+   Size the tasks under each milestone so the ones that run in sequence
+   roughly fill their window instead of a fraction of it. Tasks that run in
+   parallel share a window rather than adding to it, so count the longest
+   chain, not the total.
+
+   Never shrink an estimate to make it fit. If the work genuinely needs more
+   time than the SOW allows, give the larger number: that gap is the most
+   useful thing this plan can report, and trimming it would only make the
+   schedule agree with the contract by pretending.
+   Cross-team dependencies matter: a technical integration usually depends on
+   the commercial contract, and operations configuration usually depends on
+   technical validation.
+   Set assignee_role to the role on that task's own team best suited to the
+   work, chosen from this roster:
+
+{role_guide}
+
+   Use a role from the task's own team. Never write a person's name — the SOW
+   names roles, and inventing a person is worse than naming none.
+6. details: everything the SOW enumerates, each filed under one category
+   from the list below. This is where the specifics go — the individual APIs,
+   offers, merchants, configuration steps and training topics — as opposed to
+   the work of delivering them, which is a task.
+
+{category_guide}
+
+   List an item only if the SOW mentions it. An empty category means the SOW
+   said nothing about it, which is itself worth knowing.
+7. assumptions: every gap you filled, with a reason and a confidence score.
 
 Team ownership guide:
 - commercial: contracts, pricing, merchant/offer counts, sign-offs, SLAs.
@@ -113,17 +161,33 @@ Report one finding for each of these fields:
 
 CLAIM_EXTRACTION = Prompt(
     name="claim_extraction",
-    version="v1",
+    version="v2",
     system=(
-        "You split a generated project item into the atomic factual claims it "
+        "You split a generated project task into the atomic factual claims it "
         "makes, so each can be checked against the SOW separately.\n\n"
+        "A task and a SOW speak in different moods, and this is the thing to "
+        "get right. A task says what someone will DO: 'Design the OAuth 2.0 "
+        "flow'. A SOW says what must BE TRUE: 'authentication uses OAuth 2.0 "
+        "client-credentials'. Extract the state the work is meant to bring "
+        "about, never the act of bringing it about.\n\n"
+        "This matters because a SOW almost never contains the words design, "
+        "develop, implement, optimise, configure or conduct. A claim built "
+        "around one of those verbs cannot be supported by any SOW, no matter "
+        "how well the task matches the document — so it measures nothing and "
+        "quietly condemns correct work.\n\n"
+        "  task:  'Design client-credentials OAuth 2.0 flow for the POS integration'\n"
+        "  claim: 'Authentication with the merchant POS uses OAuth 2.0 "
+        "client-credentials'\n"
+        "  wrong: 'An OAuth 2.0 flow will be designed'\n\n"
+        "  task:  'Conduct performance and load testing'\n"
+        "  claim: 'The integration sustains 50 transactions per second at peak'\n"
+        "  wrong: 'Performance testing is conducted'\n\n"
         "A claim is one checkable assertion. Split anything compound: "
         "'Deliver 2 days of training across 5 branches by 27 November' is three "
         "claims — the duration, the branch count, and the date.\n\n"
-        "Only extract assertions about the project that could be true or false "
-        "against the SOW. Do not extract restatements of the task's own purpose "
-        "('this task implements the integration'), and do not invent claims the "
-        "item does not make.\n\n"
+        "Every task asserts something about the finished system or the "
+        "engagement; find it rather than returning nothing. But do not invent "
+        "claims the task does not make, and do not restate its purpose.\n\n"
         "Mark a claim as quantitative when it asserts a number, date, duration, "
         "or rate — those are where unsupported detail does the most damage."
     ),
@@ -138,7 +202,7 @@ Claim ids must be unique across the whole response.
 
 CLAIM_VERIFICATION = Prompt(
     name="claim_verification",
-    version="v1",
+    version="v2",
     system=(
         "You judge whether SOW evidence establishes each claim. You are the "
         "check on a generation step, so err towards scepticism.\n\n"
@@ -153,6 +217,11 @@ CLAIM_VERIFICATION = Prompt(
         "Rules:\n"
         "- Judge only against the evidence given. Plausibility, industry norms "
         "and your own knowledge are not evidence.\n"
+        "- Judge the state the claim describes, not the wording around it. A "
+        "SOW requiring a property establishes that property; it does not also "
+        "have to describe the work of building it. 'The SOW does not mention "
+        "designing/testing/configuring this' is never a reason to withhold "
+        "support.\n"
         "- A number is supported only if the evidence gives that number or one "
         "it arithmetically determines. A different number is contradicted.\n"
         "- Cite the chunk keys that do the supporting, and only those.\n"
@@ -204,6 +273,60 @@ Return a single replacement task.
 """,
 )
 
+TECHNICAL_ARTIFACTS = Prompt(
+    name="technical_artifacts",
+    version="v1",
+    system=(
+        "You turn delivery requirements into user stories, the conditions that "
+        "make each story done, and the tests that prove it.\n\n"
+        "A user story says who wants something, what they want to do, and why. "
+        "The actor must be someone who *receives* value from the finished "
+        "system: a merchant, a customer, a cashier, a merchant's store "
+        "manager. Never someone delivering the project.\n\n"
+        "This is the easiest thing to get wrong, because the requirements are "
+        "written from the delivery side. Watch for it:\n"
+        "  wrong: 'As a support agent, I want to deliver 2 days of training'\n"
+        "  right: 'As a store cashier, I want to be trained on enrolment and "
+        "redemption so that I can serve customers without help'\n"
+        "  wrong: 'As a QA engineer, I want to run end-to-end tests'\n"
+        "  right: 'As a merchant, I want points to accrue correctly on every "
+        "till so that customers are not shortchanged'\n\n"
+        "If the actor is a role on the delivery team, the sentence is a task "
+        "in disguise: it describes work being done rather than value someone "
+        "receives, and nobody outside the project can judge it done.\n\n"
+        "Acceptance criteria are the conditions that decide whether the story "
+        "is finished. Each states one thing, and each must be observable.\n\n"
+        "A test case is a check somebody will actually run: a starting state, "
+        "one action, and the result that must be observed.\n\n"
+        "Rules:\n"
+        "- Every story must name the requirement it comes from, using the "
+        "requirement ids given. Do not invent an id.\n"
+        "- Use the working values listed below when a test needs a concrete "
+        "number, so the case is runnable.\n"
+        "- Whenever a test case relies on one of those values, list the field "
+        "key in depends_on_fields. Some of them are values the SOW never "
+        "stated, and a case built on one must be marked before anyone runs it "
+        "and reports the system correct. Getting this list right matters more "
+        "than the wording of the case.\n"
+        "- Do not invent requirements. Cover the ones given and stop."
+    ),
+    template="""Write user stories, acceptance criteria and test cases for these
+requirements.
+
+=== REQUIREMENTS ===
+{requirements}
+=== END REQUIREMENTS ===
+
+Working values the plan currently runs on. Use these for concrete numbers, and
+name the field key in depends_on_fields wherever a test relies on one:
+
+{working_values}
+
+Cover every requirement. Give each story 2-4 acceptance criteria and at least
+one test case.
+""",
+)
+
 REGISTRY = {
     p.name: p
     for p in [
@@ -212,5 +335,6 @@ REGISTRY = {
         CLAIM_EXTRACTION,
         CLAIM_VERIFICATION,
         TASK_REGENERATION,
+        TECHNICAL_ARTIFACTS,
     ]
 }

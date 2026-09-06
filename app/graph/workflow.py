@@ -26,28 +26,38 @@ from langgraph.graph import END, StateGraph
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
-from app.graph.assumptions import build_assumptions, render_field_list, validate_findings
+from app.graph.assumptions import (
+    build_assumptions,
+    build_questions,
+    render_field_list,
+    validate_findings,
+)
 from app.graph.persistence import (
     invented_citations,
+    persist_artifacts,
     persist_assumptions,
     persist_document,
     persist_extraction,
     persist_grounding,
+    persist_questions,
 )
 from app.grounding.engine import ground_project, project_grounding_score
 from app.ingestion.parser import parse_document
 from app.ingestion.validation import ParsingStatus, validate_parsed_document
-from app.llm.client import GeminiClient, build_chunked_text
-from app.llm.prompts import GAP_DETECTION, SOW_EXTRACTION
-from app.models import Assumption, Project, ProjectTask
+from app.llm.client import GeminiClient, LLMError, build_chunked_text
+from app.llm.prompts import GAP_DETECTION, SOW_EXTRACTION, TECHNICAL_ARTIFACTS
+from app.models import Assumption, Project, ProjectRequirement, ProjectTask
 from app.notifications.discord import notify_review_ready
 from app.planning.service import resolve_deadline, schedule_project
 from app.rag.index import index_document, search
-from app.schemas.enums import ProjectStatus
+from app.schemas.artifacts import TechnicalArtifacts
+from app.schemas.details import render_category_guide
+from app.schemas.enums import ProjectStatus, SourceStatus
 from app.schemas.fields import PLANNING_FIELDS
 from app.schemas.gaps import GapReport
+from app.schemas.roles import render_role_guide
 from app.schemas.sow import StructuredSOW
-from app.validation.pipeline import run_validation
+from app.validation.pipeline import record_stage, run_validation, validate_derived_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +72,7 @@ class SOWState(TypedDict, total=False):
     extraction: StructuredSOW
     gap_findings: dict
     assumptions: list[dict]
+    questions: list[dict]
     schedule: Any
     critical_path: list[str]
     groundings: list[Any]
@@ -69,6 +80,9 @@ class SOWState(TypedDict, total=False):
     validation: Any
     task_count: int
     assumption_count: int
+    question_count: int
+    story_count: int
+    test_case_count: int
     warnings: Annotated[list[str], lambda a, b: a + b]
     error: str
 
@@ -125,6 +139,8 @@ def make_extract_node(client: GeminiClient, db: Session | None):
                 graph_node="sow_extraction",
                 doc_key=doc.doc_key,
                 chunked_text=build_chunked_text(doc),
+                role_guide=render_role_guide(),
+                category_guide=render_category_guide(),
             )
         return {"extraction": extraction}
 
@@ -149,10 +165,13 @@ def make_gap_audit_node(client: GeminiClient, db: Session | None):
                 field_list=render_field_list(PLANNING_FIELDS),
             )
         findings, warnings = validate_findings(report, PLANNING_FIELDS, valid_keys)
+        # The same gaps, seen twice: what the plan runs on, and what to ask.
         assumptions = build_assumptions(findings)
+        questions = build_questions(findings)
         return {
             "gap_findings": findings,
             "assumptions": assumptions,
+            "questions": questions,
             "warnings": warnings,
         }
 
@@ -170,10 +189,11 @@ def make_persist_node(db: Session):
         )
         extraction = state["extraction"]
         fabricated = invented_citations(extraction, chunks_by_key)
-        tasks = persist_extraction(db, project, extraction, chunks_by_key)
+        tasks, extraction_warnings = persist_extraction(db, project, extraction, chunks_by_key)
         # The engine's audit is authoritative over whatever the extraction pass
         # happened to volunteer, so its assumptions replace those.
         assumptions = persist_assumptions(db, project, state.get("assumptions", []))
+        questions = persist_questions(db, project, state.get("questions", []))
         info = extraction.project_info
         project.status = ProjectStatus.AWAITING_APPROVAL
         project.name = info.project_name or project.name
@@ -181,14 +201,15 @@ def make_persist_node(db: Session):
         project.start_date = info.start_date
         project.go_live_date = info.go_live_date or info.end_date
         db.commit()
-        warnings = (
-            [f"dropped {len(fabricated)} citation(s) not present in the SOW: {fabricated[:5]}"]
-            if fabricated
-            else []
-        )
+        warnings = list(extraction_warnings)
+        if fabricated:
+            warnings.append(
+                f"dropped {len(fabricated)} citation(s) not present in the SOW: {fabricated[:5]}"
+            )
         return {
             "task_count": len(tasks),
             "assumption_count": len(assumptions),
+            "question_count": len(questions),
             "warnings": warnings,
         }
 
@@ -264,6 +285,95 @@ def make_grounding_node(client: GeminiClient, db: Session, use_retrieval: bool =
     return _node_grounding
 
 
+def _render_requirements(requirements: list[ProjectRequirement]) -> str:
+    return "\n".join(
+        f"[{r.requirement_key}] ({r.team}) {r.title}"
+        + (f"\n    {r.description}" if r.description else "")
+        for r in requirements
+    )
+
+
+def _render_working_values(findings: dict) -> str:
+    """The values the plan runs on, each marked with where it came from.
+
+    The model needs them to write a runnable test; marking their status is what
+    lets it declare honestly which ones a case depends on.
+    """
+    lines = []
+    for spec in PLANNING_FIELDS:
+        finding = findings.get(spec.key)
+        if finding is not None and finding.status != SourceStatus.ASSUMED and finding.value:
+            lines.append(f"- {spec.key}: {finding.value} (stated in the SOW)")
+        else:
+            hint = getattr(finding, "hint", "") if finding is not None else ""
+            lines.append(f"- {spec.key}: {hint or spec.default} (assumed, not in the SOW)")
+    return "\n".join(lines)
+
+
+def make_artifacts_node(client: GeminiClient, db: Session):
+    """Derive user stories, acceptance criteria and test cases.
+
+    Runs last, and swallows an LLM failure into a warning rather than raising.
+    A finished, scheduled, grounded plan must not be thrown away because an
+    additional call ran out of quota — the derived layer is an enrichment, not
+    the deliverable.
+    """
+
+    def _node_artifacts(state: SOWState) -> SOWState:
+        project_id = state["project_id"]
+        project = db.get(Project, project_id)
+        requirements = (
+            db.query(ProjectRequirement)
+            .filter(ProjectRequirement.project_id == project_id)
+            .all()
+        )
+        if not requirements or project is None:
+            return {"warnings": ["no requirements to derive user stories from"]}
+
+        findings = state.get("gap_findings", {})
+        assumed_fields = {
+            key
+            for key, finding in findings.items()
+            if getattr(finding, "status", None) == SourceStatus.ASSUMED
+        }
+
+        try:
+            artifacts = client.generate_structured(
+                prompt=TECHNICAL_ARTIFACTS,
+                schema=TechnicalArtifacts,
+                db=db,
+                project_id=project_id,
+                graph_node="technical_artifacts",
+                requirements=_render_requirements(requirements),
+                working_values=_render_working_values(findings),
+            )
+        except LLMError as exc:
+            logger.warning("Derived artifacts skipped: %s", exc)
+            return {"warnings": [f"user stories and test cases were not generated: {exc}"]}
+
+        stories, warnings = persist_artifacts(
+            db,
+            project,
+            artifacts,
+            {r.requirement_key: r for r in requirements},
+            assumed_fields,
+        )
+        db.commit()
+
+        stage = validate_derived_artifacts(db, project_id)
+        record_stage(db, project_id, stage)
+        if not stage.passed:
+            warnings.append(f"validation {stage.stage}: {stage.detail}")
+
+        return {
+            "story_count": len(stories),
+            "test_case_count": sum(len(s.test_cases) for s in stories),
+            "warnings": warnings,
+        }
+
+    return _node_artifacts
+
+
 def build_graph(client: GeminiClient, db: Session, use_retrieval: bool = True):
     graph = StateGraph(SOWState)
     graph.add_node("parse", _node_parse)
@@ -274,6 +384,7 @@ def build_graph(client: GeminiClient, db: Session, use_retrieval: bool = True):
     graph.add_node("schedule", make_schedule_node(db))
     graph.add_node("grounding", make_grounding_node(client, db, use_retrieval))
     graph.add_node("persist", make_persist_node(db))
+    graph.add_node("artifacts", make_artifacts_node(client, db))
 
     graph.set_entry_point("parse")
     graph.add_edge("parse", "validate_parsing")
@@ -291,7 +402,10 @@ def build_graph(client: GeminiClient, db: Session, use_retrieval: bool = True):
     # the timeline validation stage needs the dates scheduling produces.
     graph.add_edge("persist", "schedule")
     graph.add_edge("schedule", "grounding")
-    graph.add_edge("grounding", END)
+    # Derived artifacts come last: they enrich a plan that is already
+    # complete, so a failure here costs the enrichment and nothing else.
+    graph.add_edge("grounding", "artifacts")
+    graph.add_edge("artifacts", END)
     return graph.compile()
 
 
