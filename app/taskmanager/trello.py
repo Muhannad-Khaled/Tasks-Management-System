@@ -130,7 +130,9 @@ class TrelloAdapter(TaskManagerInterface):
         # It is not — it comes back whole.
         cards = (
             self._request(
-                "GET", f"/boards/{board_id}/cards/all", fields="idList,name,desc,closed"
+                "GET",
+                f"/boards/{board_id}/cards/all",
+                fields="idList,name,desc,closed,idMembers",
             )
             or []
         )
@@ -140,6 +142,7 @@ class TrelloAdapter(TaskManagerInterface):
                 title=card.get("name", ""),
                 description=card.get("desc", ""),
                 archived=bool(card.get("closed")),
+                members=tuple(card.get("idMembers") or ()),
             )
             for card in cards
         }

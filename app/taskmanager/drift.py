@@ -28,6 +28,7 @@ MOVED = "moved"
 EDITED = "edited"
 ARCHIVED = "archived"
 DELETED = "deleted"
+REASSIGNED = "reassigned"
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,26 @@ def detect(
                     MOVED,
                     f"{task.title!r} sits in {card.location!r}, but the plan has it "
                     f"under {task.team} ({planned!r}).",
+                )
+            )
+
+        # Checked separately from the fingerprint. Folding members into the
+        # digest would report that the card's text changed when only its owner
+        # did, and the two need different answers: text is replaced by pushing
+        # again, an owner is a decision somebody made about who does the work.
+        #
+        # Only when the plan knows an account. Where it does not, the platform
+        # deliberately leaves members alone on push, so whoever is on the card
+        # was put there by a person and is not a disagreement with anything.
+        wanted = board_tasks[task.id].assignee_member_id
+        if wanted and wanted not in card.members:
+            owner = board_tasks[task.id].assignee_name or "the planned owner"
+            found.append(
+                Difference(
+                    task.id,
+                    REASSIGNED,
+                    f"{task.title!r} is no longer assigned to {owner} on the board. "
+                    "Pushing the task again puts them back.",
                 )
             )
 

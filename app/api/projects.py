@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from app.graph.review import (
     set_review,
 )
 from app.graph.workflow import run_sow_pipeline
-from app.llm.client import GeminiClient, LLMError
+from app.llm.client import GeminiClient, LLMError, get_llm_client
 from app.models import (
     Assumption,
     ClaimRecord,
@@ -931,7 +932,11 @@ def edit_task(
 
 @router.post("/{project_id}/tasks/{task_id}/reject")
 def reject_task(
-    project_id: str, task_id: str, body: RejectRequest, db: Session = Depends(get_db)
+    project_id: str,
+    task_id: str,
+    body: RejectRequest,
+    db: Session = Depends(get_db),
+    make_llm: Callable[[], GeminiClient] = Depends(get_llm_client),
 ) -> TaskView:
     """Reject a task and, by default, regenerate that task alone.
 
@@ -944,7 +949,7 @@ def reject_task(
         return _task_view(db, task)
 
     try:
-        task = regenerate_task(GeminiClient(), db, task, body.reason)
+        task = regenerate_task(make_llm(), db, task, body.reason)
     except ReviewError as exc:
         raise HTTPException(409, str(exc)) from exc
     except LLMError as exc:

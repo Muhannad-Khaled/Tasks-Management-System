@@ -206,6 +206,10 @@ class CardSnapshot:
     # Archived, not gone. Kept apart from a card that is missing entirely
     # because an archived card can be put back exactly as it was.
     archived: bool = False
+    # Who Trello has on the card. Deliberately outside the fingerprint below:
+    # a reassignment is not an edit, and folding it in would report that the
+    # card's text changed when only its owner did.
+    members: tuple[str, ...] = ()
 
     def fingerprint(self) -> str:
         return content_fingerprint(self.title, self.description)

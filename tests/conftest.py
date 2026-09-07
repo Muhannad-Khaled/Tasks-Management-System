@@ -112,3 +112,31 @@ def db():
         # aborted transaction holding locks, and the *next* run's drop_all
         # blocks on them forever. One broken test then looks like a hung suite.
         session.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_model(request, monkeypatch):
+    """Nothing in the suite may reach the real model.
+
+    One endpoint built its client inline, so rejecting a task called Google
+    from inside a unit test: it passed when the API answered, failed when it
+    was busy, and spent the project's daily quota on every full run. The test
+    was measuring Google's weather, not this codebase.
+
+    Raising here makes that mistake loud the first time it is made again,
+    rather than the fiftieth time the suite is mysteriously red.
+    """
+
+    if request.node.get_closest_marker("builds_a_real_client"):
+        # test_llm_client.py constructs one on purpose to exercise the retry
+        # and fallback logic, over a mocked transport. It never leaves the
+        # process; blocking it would only stop that logic being tested at all.
+        return
+
+    def refuse(self, *args, **kwargs):
+        raise AssertionError(
+            "A test tried to construct a real GeminiClient. Pass a StubLLM, or "
+            "override the get_llm_client dependency."
+        )
+
+    monkeypatch.setattr("app.llm.client.GeminiClient.__init__", refuse)

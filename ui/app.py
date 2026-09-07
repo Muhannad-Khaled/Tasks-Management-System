@@ -484,6 +484,7 @@ def board_badge(task: dict, drift_kind: str | None = None) -> str:
             "deleted": "🗑️ deleted from the board",
             "moved": "↔️ moved to another list on the board",
             "edited": "✏️ edited on the board",
+            "reassigned": "👤 assigned to somebody else on the board",
         }.get(drift_kind, f"⚠️ {drift_kind}")
     return BOARD_BADGES[(bool(task["external_ref"]), bool(task["board_dirty"]))]
 
@@ -520,7 +521,13 @@ def render_push_button(column, project_id: str, task: dict) -> None:
     st.rerun()
 
 
-DRIFT_ICONS = {"moved": "↔️", "edited": "✏️", "archived": "📦", "deleted": "🗑️"}
+DRIFT_ICONS = {
+    "moved": "↔️",
+    "edited": "✏️",
+    "archived": "📦",
+    "deleted": "🗑️",
+    "reassigned": "👤",
+}
 
 
 def since(timestamp: str | None) -> str:

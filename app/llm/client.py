@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from collections.abc import Callable
 from typing import TypeVar
 
 import httpx
@@ -78,6 +79,23 @@ REQUEST_TIMEOUT_MS = 180_000
 
 def _hash_input(prompt_text: str, model: str, schema_name: str) -> str:
     return hashlib.sha256(f"{model}|{schema_name}|{prompt_text}".encode()).hexdigest()
+
+
+def get_llm_client() -> Callable[[], GeminiClient]:
+    """How to build the model client, as a FastAPI dependency.
+
+    A seam, not indirection for its own sake. Built inline, an endpoint that
+    regenerates a task reached the live API from inside the test suite: the
+    test passed when Google answered and failed when it did not, spent the
+    project's daily quota on every run, and proved nothing either way.
+
+    It hands back a factory rather than a client because FastAPI resolves
+    dependencies before the handler runs. Returning a client would construct
+    one on every rejection, including the ones that regenerate nothing — and
+    on a machine with no API key that raises, failing an operation that needs
+    no model at all.
+    """
+    return GeminiClient
 
 
 class GeminiClient:

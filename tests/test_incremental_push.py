@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.core.db import get_db
 from app.graph.workflow import run_sow_pipeline
 from app.ingestion.parser import parse_document
+from app.llm.client import get_llm_client
 from app.main import app
 from app.models import Project, ProjectTask
 from app.schemas.enums import ProjectStatus
@@ -105,6 +106,9 @@ def board(monkeypatch):
 @pytest.fixture
 def client(db):
     app.dependency_overrides[get_db] = lambda: db
+    # Regeneration goes through the model. Without this the endpoint builds a
+    # real client and the test becomes a check on Google's availability.
+    app.dependency_overrides[get_llm_client] = lambda: StubLLM
     yield TestClient(app)
     app.dependency_overrides.clear()
 

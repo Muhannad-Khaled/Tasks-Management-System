@@ -330,3 +330,117 @@ def test_staffing_a_role_puts_the_right_account_on_every_card_it_owns(db):
     )
     assert owned.person_id == sara.id
     assert _card_for(db, project, "Backend Engineer").assignee_member_id == "mem-2"
+
+
+# --- what the board is caught doing --------------------------------------
+
+
+def _snapshot(members=(), title="Build", desc="body"):
+    from app.taskmanager.base import CardSnapshot
+
+    return CardSnapshot(location="Technical", title=title, description=desc, members=members)
+
+
+def _pair(member_id: str = "", name: str = ""):
+    """A task on the board and the card the plan last wrote for it."""
+    from app.taskmanager.base import BoardTask
+
+    task = ProjectTask(
+        id="T1", project_id="P1", title="Build", team="technical", external_ref="c1"
+    )
+    card = BoardTask(
+        task_id="T1", title="Build", description="", team="technical",
+        priority="medium", status="backlog",
+        assignee_name=name, assignee_member_id=member_id,
+    )
+    return task, {"T1": card}
+
+
+class _Adapter:
+    def expected_location(self, task) -> str:
+        return "Technical"
+
+
+def test_a_card_taken_from_its_planned_owner_is_reported(db):
+    """The gap assignment opened: nobody was watching the members field.
+
+    The fingerprint covers the title and the body. Somebody removing the owner
+    and putting themselves on the card changes neither, so before this the
+    platform reported the board as matching the plan while it did not.
+    """
+    from app.taskmanager import drift
+
+    task, cards = _pair("mem-1", "Karim Tarek")
+
+    found = drift.detect([task], cards, {"c1": _snapshot(members=("mem-9",))}, _Adapter())
+
+    assert [d.kind for d in found] == [drift.REASSIGNED]
+    assert "Karim Tarek" in found[0].detail
+
+
+def test_a_card_still_holding_its_owner_is_not_reported(db):
+    from app.taskmanager import drift
+
+    task, cards = _pair("mem-1", "Karim Tarek")
+
+    found = drift.detect([task], cards, {"c1": _snapshot(members=("mem-1", "mem-9"))}, _Adapter())
+
+    assert found == [], "a second person alongside the owner is not a disagreement"
+
+
+def test_members_on_a_card_the_plan_has_no_account_for_are_left_alone(db):
+    """Push never sets members there, so whoever is on it was put there by hand.
+
+    Reporting that would be the platform objecting to the one thing it has
+    already decided not to touch.
+    """
+    from app.taskmanager import drift
+
+    task, cards = _pair()
+
+    assert drift.detect([task], cards, {"c1": _snapshot(members=("mem-9",))}, _Adapter()) == []
+
+
+def test_a_reassignment_is_not_reported_as_an_edit(db):
+    """Two different problems with two different answers.
+
+    Text is replaced by pushing again; an owner is somebody's decision about
+    who does the work. Folding members into the fingerprint would say the card
+    was rewritten when not a character of it changed.
+    """
+    from app.taskmanager import drift
+
+    task, cards = _pair("mem-1", "Karim Tarek")
+    task.board_fingerprint = _snapshot().fingerprint()
+
+    found = drift.detect([task], cards, {"c1": _snapshot(members=("mem-9",))}, _Adapter())
+
+    assert [d.kind for d in found] == [drift.REASSIGNED]
+
+
+def test_the_snapshot_reads_members_off_the_board():
+    import httpx
+
+    from app.taskmanager.trello import TrelloAdapter
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/lists"):
+            return httpx.Response(200, json=[{"id": "l1", "name": "Technical"}])
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "c1",
+                    "idList": "l1",
+                    "name": "Build",
+                    "desc": "",
+                    "closed": False,
+                    "idMembers": ["mem-1", "mem-2"],
+                }
+            ],
+        )
+
+    adapter = TrelloAdapter(api_key="k", token="t")
+    adapter.http = httpx.Client(transport=httpx.MockTransport(respond))
+
+    assert adapter.card_snapshots("b1")["c1"].members == ("mem-1", "mem-2")

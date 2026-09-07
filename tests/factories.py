@@ -63,7 +63,26 @@ class StubLLM:
             return self._judgement(kwargs.get("claims", ""))
         if schema is TechnicalArtifacts:
             return self._artifacts()
+        if schema is ExtractedTask:
+            return self._regenerated(kwargs.get("title", "Task"))
         return self._extraction()
+
+    def _regenerated(self, title: str) -> ExtractedTask:
+        """A rewritten task, for the regeneration prompt.
+
+        Deliberately different wording from the original: a regeneration that
+        returned the same text would make every assertion about what changed
+        pass without the code having changed anything.
+        """
+        return ExtractedTask(
+            task_id="T-001",
+            team="technical",
+            title=f"{title} (revised)",
+            description="Narrowed to what the SOW actually establishes.",
+            estimated_hours=24,
+            source_status="explicit",
+            source_chunk_keys=self.citations,
+        )
 
     def _artifacts(self) -> TechnicalArtifacts:
         """One story per requirement, covering the cases that matter.
