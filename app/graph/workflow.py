@@ -169,6 +169,14 @@ def make_gap_audit_node(client: GeminiClient, db: Session | None):
         # The same gaps, seen twice: what the plan runs on, and what to ask.
         assumptions = build_assumptions(findings)
         questions = build_questions(findings)
+        # Said at ingest as well as in the UI. A count of gaps with no count of
+        # what was searched invites the reader to treat it as the whole truth
+        # about the document, which it is not and was never able to be.
+        warnings.append(
+            f"gap audit: checked {len(PLANNING_FIELDS)} planning field(s), "
+            f"{len(questions)} left unanswered by the SOW. Subjects outside "
+            "those fields were not examined."
+        )
         return {
             "gap_findings": findings,
             "assumptions": assumptions,

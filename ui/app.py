@@ -872,13 +872,53 @@ def render_structure(project_id: str) -> None:
                             st.caption(case["kind"].replace("_", " "))
 
 
+def render_audit_coverage(coverage: dict | None) -> None:
+    """What the audit looked at, shown next to what it found.
+
+    Nine questions with nothing beside them reads as the whole of what the SOW
+    left out. It is only the whole of what it left out among the fields below,
+    and the two were indistinguishable until this said so.
+    """
+    if not coverage:
+        return
+
+    checked, answered, still_open = coverage["checked"], coverage["answered"], coverage["open"]
+    if still_open:
+        st.info(
+            f"**Checked {checked} planning fields.** The SOW settles {answered}; "
+            f"{still_open} are open below."
+        )
+    else:
+        # Emphatically not "the SOW answered everything". It answered these.
+        st.success(f"**All {checked} planning fields the audit asks about are settled.**")
+
+    if not coverage["reliable"]:
+        st.warning(
+            "The recorded assumptions and open questions disagree in number, so "
+            "this breakdown may not reflect what the audit actually found."
+        )
+
+    st.caption(f"⚠️ {coverage['boundary']}")
+
+    with st.expander(f"The {answered} field(s) the SOW does settle"):
+        st.caption(
+            "Listed so a subject that was checked can be told apart from one "
+            "that was never on the list. Anything absent from both columns was "
+            "not looked for."
+        )
+        for field in coverage["answered_fields"]:
+            st.markdown(f"- ✅ **{field['label']}** — {field['question']}")
+
+
 def render_questions(project_id: str) -> None:
     """What the SOW left unanswered, grouped by who can answer it."""
     data = api("GET", f"/projects/{project_id}/questions")
     if not data:
         return
+
+    render_audit_coverage(data.get("coverage"))
+
     if not data["total"]:
-        st.success("The SOW answered every planning question.")
         return
 
     st.caption(

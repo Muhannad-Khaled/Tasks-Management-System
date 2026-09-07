@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.graph.assumptions import audit_coverage
 from app.graph.review import (
     ReviewError,
     apply_edit,
@@ -505,10 +506,19 @@ def list_questions(project_id: str, db: Session = Depends(get_db)) -> dict:
                 "answer": q.answer,
             }
         )
+    # Reported with the questions, never separately. The number of gaps and the
+    # size of the search that found them are one fact; split across two calls,
+    # a UI would sooner or later show the first without the second.
     return {
         "counts": {scope: len(items) for scope, items in grouped.items()},
         "total": len(rows),
         "by_scope": grouped,
+        "coverage": audit_coverage(
+            {q.field_key for q in rows if q.field_key and q.status == "open"},
+            assumption_count=db.query(Assumption)
+            .filter(Assumption.project_id == project_id)
+            .count(),
+        ),
     }
 
 
