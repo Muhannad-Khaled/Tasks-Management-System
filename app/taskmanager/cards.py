@@ -10,12 +10,13 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Person,
     ProjectRole,
     ProjectTask,
     SOWSection,
     UserStory,
 )
-from app.taskmanager.base import BoardCase, BoardTask
+from app.taskmanager.base import BoardBlocker, BoardCase, BoardTask
 
 
 def _artifacts_by_requirement(db: Session, project_id: str) -> dict[str, dict]:
@@ -57,8 +58,21 @@ def _holder_of(db: Session, task: ProjectTask) -> str:
     which means changing who holds a role updates every task at once instead of
     task by task.
     """
+    person = _person_on(db, task)
+    if person is not None:
+        return person.name
+    return task.assignee
+
+
+def _person_on(db: Session, task: ProjectTask) -> Person | None:
+    """The directory entry behind a task, when there is one.
+
+    `assignee` is free text a PM typed, so it names somebody without being
+    anybody: it can carry a name onto a card but never a Trello account. Only
+    a role held by a directory person resolves to a row here.
+    """
     if task.assignee:
-        return task.assignee
+        return None
     role = (
         db.query(ProjectRole)
         .filter(
@@ -67,7 +81,7 @@ def _holder_of(db: Session, task: ProjectTask) -> str:
         )
         .first()
     )
-    return role.person.name if role and role.person else ""
+    return role.person if role and role.person else None
 
 
 def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> BoardTask:
@@ -91,6 +105,7 @@ def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> Boa
         due_date=task.due_date,
         assignee_role=task.assignee_role,
         assignee_name=_holder_of(db, task),
+        assignee_member_id=(holder.trello_member_id if (holder := _person_on(db, task)) else ""),
         source_status=task.source_status,
         validation_status=task.validation_status,
         acceptance_criteria=artifacts.get("criteria", []),
@@ -99,5 +114,8 @@ def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> Boa
         source_section=section.title if section else "",
         source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
         grounding_score=task.grounding_score,
-        depends_on_titles=[d.title for d in task.depends_on],
+        blocked_by=[
+            BoardBlocker(title=link.upstream.title, source_status=link.source_status)
+            for link in task.blockers
+        ],
     )

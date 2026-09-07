@@ -346,7 +346,8 @@ def test_the_schedule_never_starts_work_before_what_it_depends_on(client, stub_l
     by_title = {t["title"]: t for t in tasks}
 
     for task in tasks:
-        for blocker_title in task.get("depends_on", []):
+        for arrow in task.get("depends_on", []):
+            blocker_title = arrow["title"]
             blocker = by_title.get(blocker_title)
             if not blocker or not (blocker["due_date"] and task["start_date"]):
                 continue

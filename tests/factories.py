@@ -25,6 +25,7 @@ from app.schemas.grounding import (
 )
 from app.schemas.sow import (
     ExtractedAssumption,
+    ExtractedDependency,
     ExtractedDetail,
     ExtractedMilestone,
     ExtractedRequirement,
@@ -325,7 +326,15 @@ class StubLLM:
                     description="REST integration for points accrual.",
                     priority="high",
                     estimated_hours=60,
-                    depends_on=["T-001"],
+                    # Ordered by the SOW itself, with the chunk that says so.
+                    depends_on=[
+                        ExtractedDependency(
+                            depends_on_id="T-001",
+                            source_status="explicit",
+                            source_chunk_keys=self.citations,
+                            rationale="Integration work starts after the contract is signed.",
+                        )
+                    ],
                     source_status="explicit",
                     source_chunk_keys=self.citations,
                 ),
@@ -338,7 +347,14 @@ class StubLLM:
                     title="Configure merchant and offers",
                     priority="medium",
                     estimated_hours=16,
-                    depends_on=["T-002"],
+                    # Nothing in the SOW orders these two; the system did.
+                    depends_on=[
+                        ExtractedDependency(
+                            depends_on_id="T-002",
+                            source_status="assumed",
+                            rationale="Configuration normally follows the build.",
+                        )
+                    ],
                     source_status="inferred",
                     source_chunk_keys=self.citations,
                 ),

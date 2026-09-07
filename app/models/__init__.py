@@ -17,10 +17,10 @@ from app.models.entities import (
     SOWChunk,
     SOWDocument,
     SOWSection,
+    TaskDependency,
     UserStory,
     ValidationLog,
     milestone_tasks,
-    task_dependencies,
 )
 
 __all__ = [
@@ -42,8 +42,8 @@ __all__ = [
     "SOWChunk",
     "SOWDocument",
     "SOWSection",
+    "TaskDependency",
     "UserStory",
     "ValidationLog",
     "milestone_tasks",
-    "task_dependencies",
 ]

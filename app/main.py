@@ -1,18 +1,23 @@
 import asyncio
 import contextlib
 import logging
-import os
 
 from fastapi import FastAPI
 
 from app.api import health, projects
+from app.core.config import get_settings
 from app.taskmanager.watch import DEFAULT_INTERVAL_SECONDS, watch_boards
 
 logger = logging.getLogger(__name__)
 
 # 0 turns the watcher off, for tests and for anyone who would rather run
 # scripts/check_boards.py themselves.
-WATCH_INTERVAL = int(os.environ.get("BOARD_WATCH_SECONDS", DEFAULT_INTERVAL_SECONDS))
+#
+# Read through Settings rather than os.environ: every other setting in this
+# project comes from .env, so one that quietly ignored the file was a setting
+# people would believe they had changed. It cost an afternoon once already.
+_configured = get_settings().board_watch_seconds
+WATCH_INTERVAL = DEFAULT_INTERVAL_SECONDS if _configured is None else _configured
 
 
 @contextlib.asynccontextmanager

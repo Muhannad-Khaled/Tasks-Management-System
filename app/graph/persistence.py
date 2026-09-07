@@ -26,6 +26,7 @@ from app.models import (
     SOWChunk,
     SOWDocument,
     SOWSection,
+    TaskDependency,
     UserStory,
     milestone_tasks,
 )
@@ -396,11 +397,35 @@ def persist_extraction(
 
     for extracted in extraction.tasks:
         task = tasks_by_extracted_id[extracted.task_id]
-        for dependency_id in extracted.depends_on:
-            upstream = tasks_by_extracted_id.get(dependency_id)
+        seen: set[str] = set()
+        for link in extracted.depends_on:
+            upstream = tasks_by_extracted_id.get(link.depends_on_id)
             # Unknown ids are dropped and self-dependencies would deadlock the graph.
-            if upstream is not None and upstream.id != task.id:
-                task.depends_on.append(upstream)
+            if upstream is None or upstream.id == task.id or upstream.id in seen:
+                continue
+            seen.add(upstream.id)
+            status = str(link.source_status)
+            valid_keys = _valid_citations(link.source_chunk_keys, chunks_by_key)
+
+            # An arrow called EXPLICIT is a claim that the SOW ordered these two
+            # itself, and it is the one status a PM would not think to question.
+            # Without a citation there is nothing behind it, so it is demoted
+            # rather than trusted.
+            if status == str(SourceStatus.EXPLICIT) and not valid_keys:
+                warnings.append(
+                    f"{task.title!r} waits on {upstream.title!r}: called explicit "
+                    "with no citation the document contains, recorded as inferred"
+                )
+                status = str(SourceStatus.INFERRED)
+
+            task.blockers.append(
+                TaskDependency(
+                    depends_on_id=upstream.id,
+                    source_status=status,
+                    source_chunk_keys=",".join(valid_keys),
+                    rationale=link.rationale.strip(),
+                )
+            )
 
     db.commit()
     return list(tasks_by_extracted_id.values()), warnings

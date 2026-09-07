@@ -17,6 +17,7 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from sqlalchemy.orm import Session
 
@@ -32,7 +33,7 @@ from app.models import (
 )
 from app.planning.dependencies import build_dependency_graph
 from app.planning.milestones import check_milestones, milestone_summary
-from app.schemas.enums import Team
+from app.schemas.enums import SourceStatus, Team
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,10 @@ def _asserts_a_number(text: str) -> bool:
 # "Configure Points Calculation & Expiry Engine" as operations work when
 # configuring a calculation engine is plainly technical. Operations signals name
 # what operations configures — merchants, stores, offers — not the act itself.
+# Matched on word boundaries, never as substrings. "auth" inside "authorise"
+# filed a contract signing under the technical team on a live run, and the
+# same trap is set by "engine" in "engineer", "sla" in "translate" and "api"
+# in "capital" — a whole class of wrong answers from one missing \b.
 TEAM_SIGNALS = {
     Team.COMMERCIAL: (
         "contract",
@@ -66,7 +71,10 @@ TEAM_SIGNALS = {
         "api",
         "integration",
         "endpoint",
-        "auth",
+        # Not "auth": it is a prefix of ordinary contract language. The two
+        # phrases below are what the technical work is actually called.
+        "authentication",
+        "authorisation flow",
         "engine",
         "calculation",
         "accrual logic",
@@ -164,13 +172,25 @@ def validate_evidence(db: Session, tasks: list[ProjectTask]) -> StageResult:
     )
 
 
+@lru_cache(maxsize=256)
+def _signal_pattern(signal: str) -> re.Pattern[str]:
+    return re.compile(rf"\b{re.escape(signal)}\b")
+
+
+def _mentions(text: str, signal: str) -> bool:
+    """Whether the text uses this word, rather than merely containing it."""
+    return _signal_pattern(signal).search(text) is not None
+
+
 def validate_business_rules(tasks: list[ProjectTask]) -> StageResult:
     """Catch a task filed under a team its own wording contradicts."""
     problems = []
     for task in tasks:
         text = f"{task.title} {task.description}".lower()
         matches = {
-            team for team, signals in TEAM_SIGNALS.items() if any(s in text for s in signals)
+            team
+            for team, signals in TEAM_SIGNALS.items()
+            if any(_mentions(text, signal) for signal in signals)
         }
         # Only flag when the wording points at exactly one team and it is not this one.
         if len(matches) == 1 and task.team not in {t.value for t in matches}:
@@ -184,15 +204,41 @@ def validate_business_rules(tasks: list[ProjectTask]) -> StageResult:
 
 
 def validate_dependencies(tasks: list[ProjectTask]) -> StageResult:
+    """The arrows must form a runnable graph, and say where they came from.
+
+    Shape is not the only thing that can be wrong with a dependency. An arrow
+    the plan presents as the SOW's own ordering, with nothing behind it, is a
+    fabricated constraint — and it does more damage than a fabricated fact,
+    because it silently moves every date downstream of it.
+    """
     graph = build_dependency_graph({t.id: [d.id for d in t.depends_on] for t in tasks})
+    problems = [] if graph.is_valid else [t.id for t in tasks]
+    notes = [i.detail for i in graph.issues[:3]]
+
+    unsourced: list[str] = []
+    for task in tasks:
+        for link in task.blockers:
+            if link.source_status == str(SourceStatus.EXPLICIT) and not link.source_chunk_keys:
+                unsourced.append(task.id)
+                notes.append(
+                    f"{task.title!r} waits on {link.upstream.title!r} as though the "
+                    "SOW said so, but cites nothing"
+                )
+    problems.extend(unsourced)
+
+    if not notes:
+        arrows = [link for t in tasks for link in t.blockers]
+        judged = sum(1 for link in arrows if link.source_status != str(SourceStatus.EXPLICIT))
+        notes.append(
+            f"no cycles or dangling dependencies; {len(arrows)} dependency(s), "
+            f"{judged} not stated by the SOW"
+        )
+
     return StageResult(
         stage="dependencies",
-        passed=graph.is_valid,
-        detail=(
-            "; ".join(i.detail for i in graph.issues[:3])
-            if graph.issues
-            else "no cycles or dangling dependencies"
-        ),
+        passed=graph.is_valid and not unsourced,
+        detail="; ".join(notes[:4]),
+        offending_task_ids=sorted(set(problems)),
     )
 
 

@@ -40,6 +40,27 @@ class BoardCase:
 
 
 @dataclass
+class BoardBlocker:
+    """A task this one waits on, and whether the SOW said so.
+
+    The distinction belongs on the card and not only in the platform: the
+    person reading it is the one who would have to argue the date, and an
+    ordering somebody inferred is the kind that can be argued.
+    """
+
+    title: str
+    source_status: str = ""
+
+    def render(self) -> str:
+        note = {
+            "inferred": " (inferred, not stated)",
+            "assumed": " (assumed — the SOW does not order these)",
+            "": " (source not recorded)",
+        }.get(self.source_status, "")
+        return f"{self.title}{note}"
+
+
+@dataclass
 class BoardTask:
     """Platform-neutral view of a task being pushed to a task manager."""
 
@@ -56,12 +77,16 @@ class BoardTask:
     # the role because the role came from the SOW and the name came from a
     # human, and a card should not blur the two.
     assignee_name: str = ""
+    # Their Trello account, when the directory knows it. Empty means the card
+    # still says who owns the work in its body but nobody is assigned on the
+    # board — which is the normal case for anyone without a Trello login.
+    assignee_member_id: str = ""
     source_status: str = "explicit"
     validation_status: str = "pending"
     source_section: str = ""
     source_chunk_keys: list[str] = field(default_factory=list)
     grounding_score: float | None = None
-    depends_on_titles: list[str] = field(default_factory=list)
+    blocked_by: list[BoardBlocker] = field(default_factory=list)
     # The criteria themselves, not a count. A card that says "2 criteria,
     # look them up elsewhere" leaves the person doing the work unable to
     # tell when they are done without opening another system.
@@ -136,8 +161,8 @@ class BoardTask:
                 else self.assignee_role
             )
             facts.append(f"**Owner:** {owner}")
-        if self.depends_on_titles:
-            facts.append("**Blocked by:** " + "; ".join(self.depends_on_titles))
+        if self.blocked_by:
+            facts.append("**Blocked by:** " + "; ".join(b.render() for b in self.blocked_by))
         if self.source_section:
             facts.append(f"**From SOW:** {self.source_section}")
 
@@ -219,6 +244,10 @@ class TaskManagerInterface(ABC):
     def expected_location(self, task: BoardTask) -> str:
         """The name of the list/column the plan puts this task's card in."""
         return ""
+
+    def board_members(self, board_id: str) -> list[dict]:
+        """Accounts this board can assign a card to. Empty when it has none."""
+        return []
 
     def close(self) -> None:
         """Release whatever the adapter is holding open.

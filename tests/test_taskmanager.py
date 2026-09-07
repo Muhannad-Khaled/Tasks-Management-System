@@ -10,7 +10,7 @@ from datetime import date
 import pytest
 
 from app.schemas.roles import TEAM_ROLES
-from app.taskmanager.base import BoardCase, BoardTask, CardSnapshot
+from app.taskmanager.base import BoardBlocker, BoardCase, BoardTask, CardSnapshot
 from app.taskmanager.labels import (
     FALLBACK_COLOR,
     LABEL_COLORS,
@@ -151,9 +151,31 @@ def test_a_healthy_card_still_says_who_owns_it_and_where_it_came_from():
 
 
 def test_a_blocked_card_says_what_it_is_waiting_for():
-    body = _task(depends_on_titles=["Countersign the contract"]).rendered_description()
+    body = _task(
+        blocked_by=[BoardBlocker("Countersign the contract", "explicit")]
+    ).rendered_description()
     assert "Blocked by" in body
     assert "Countersign the contract" in body
+
+
+def test_a_card_says_which_of_its_blockers_the_sow_did_not_order():
+    """The person holding the card is the one who would argue the date."""
+    body = _task(
+        blocked_by=[
+            BoardBlocker("Countersign the contract", "explicit"),
+            BoardBlocker("Build the API", "assumed"),
+        ]
+    ).rendered_description()
+
+    # An ordering the SOW made is stated without qualification.
+    assert "Countersign the contract (" not in body
+    assert "Build the API (assumed" in body
+
+
+def test_a_blocker_recorded_before_provenance_existed_says_so():
+    """Silence would read as 'the SOW said so', which is the one thing it is not."""
+    body = _task(blocked_by=[BoardBlocker("Old arrow")]).rendered_description()
+    assert "source not recorded" in body
 
 
 def test_an_unblocked_card_does_not_mention_being_blocked():

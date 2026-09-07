@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -47,6 +48,9 @@ def check_project(
     derived = _artifacts_by_requirement(db, project.id)
     board_tasks = {t.id: _board_task(db, t, derived) for t in tasks}
     snapshots = adapter.card_snapshots(project.board_id)
+    # After the read, not before: a failed call must not leave behind a time
+    # that says the board was looked at when it was not.
+    project.board_checked_at = datetime.now(UTC)
     found = drift.detect(tasks, board_tasks, snapshots, adapter)
     fresh = drift.reconcile(db, project.id, found)
 

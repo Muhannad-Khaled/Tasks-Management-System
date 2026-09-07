@@ -42,7 +42,7 @@ Hard rules:
 
 SOW_EXTRACTION = Prompt(
     name="sow_extraction",
-    version="v7",
+    version="v8",
     system=_GROUNDING_RULES,
     template="""Extract a structured project plan from the SOW below.
 
@@ -94,6 +94,18 @@ Produce:
    Cross-team dependencies matter: a technical integration usually depends on
    the commercial contract, and operations configuration usually depends on
    technical validation.
+
+   Every entry in depends_on carries its own source_status, because an arrow
+   moves every date after it and the PM has to know whether the SOW ordered
+   the work or you did:
+     - EXPLICIT: the document states the ordering. Cite the chunk that says
+       so in source_chunk_keys. If you cannot cite it, it is not explicit.
+     - INFERRED: the ordering follows from what the document describes — one
+       task produces what the other consumes. Cite the chunks it follows from.
+     - ASSUMED: neither. You are ordering these because that is how such work
+       normally runs. Say so plainly and cite nothing.
+   Give a one-sentence rationale for every arrow. An arrow whose only defence
+   is "this usually comes first" is ASSUMED, however reasonable it sounds.
    Set assignee_role to the role on that task's own team best suited to the
    work, chosen from this roster:
 

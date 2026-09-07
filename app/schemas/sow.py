@@ -7,7 +7,7 @@ Every extracted object carries provenance: source_status + source chunk keys.
 
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.details import DetailCategory
 from app.schemas.enums import Priority, SourceStatus, Team
@@ -49,6 +49,53 @@ class ExtractedRole(Provenance):
     headcount: int = Field(default=1, ge=1)
 
 
+class ExtractedDependency(Provenance):
+    """One arrow between two tasks, and where the ordering came from.
+
+    Dependencies were the one thing this platform moved dates with and never
+    sourced. Every other extracted object carries provenance; an arrow did
+    not, so a PM could see that a task cited section 5 but not why it had to
+    wait three weeks for another one.
+
+    The distinction that matters is EXPLICIT versus the rest. A SOW that says
+    "configuration begins after technical validation passes" has decided the
+    ordering, and the schedule is repeating it. An arrow drawn because that is
+    how projects usually run is a judgement about this project, and the PM is
+    the one entitled to overrule it.
+    """
+
+    depends_on_id: str = Field(description="The task_id that must finish first, e.g. T-001")
+    # Defaulted so a model that answers with a bare task id still parses. The
+    # coercion below turns that into an arrow with no provenance rather than
+    # failing the whole extraction over a shape.
+    source_status: SourceStatus = SourceStatus.INFERRED
+    rationale: str = Field(
+        default="",
+        description=(
+            "One sentence: why this ordering. For EXPLICIT, what the SOW says. "
+            "For INFERRED, what it is derived from."
+        ),
+    )
+
+    @field_validator("depends_on_id", mode="before")
+    @classmethod
+    def _strip(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_a_bare_id(cls, value: object) -> object:
+        """Take "T-001" as well as {"depends_on_id": "T-001", ...}.
+
+        Structured output is not guaranteed to follow a schema change, and an
+        arrow with unrecorded provenance is worth far more than an extraction
+        that fails outright.
+        """
+        if isinstance(value, str):
+            return {"depends_on_id": value, "source_status": SourceStatus.INFERRED}
+        return value
+
+
 class ExtractedTask(Provenance):
     task_id: str = Field(description="Stable id like T-001")
     team: Team
@@ -74,8 +121,9 @@ class ExtractedTask(Provenance):
             "others. Judge it from the work described; a SOW rarely states it."
         ),
     )
-    depends_on: list[str] = Field(
-        default_factory=list, description="task_ids this task depends on"
+    depends_on: list[ExtractedDependency] = Field(
+        default_factory=list,
+        description="Tasks that must finish first, each with where the ordering came from",
     )
     requirement_id: str | None = Field(
         default=None, description="The requirement this task implements"

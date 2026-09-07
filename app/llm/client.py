@@ -12,6 +12,7 @@ import logging
 import time
 from typing import TypeVar
 
+import httpx
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
@@ -70,6 +71,10 @@ _TRANSIENT_MARKERS = (
 # times against it wastes minutes and hides the real problem from the caller.
 _DAILY_QUOTA_MARKERS = ("perday", "per day", "requestsperday", "freetier")
 
+# Generous, because extraction over a long SOW genuinely takes a while, but
+# finite: past this the request is not slow, it is stuck.
+REQUEST_TIMEOUT_MS = 180_000
+
 
 def _hash_input(prompt_text: str, model: str, schema_name: str) -> str:
     return hashlib.sha256(f"{model}|{schema_name}|{prompt_text}".encode()).hexdigest()
@@ -84,7 +89,15 @@ class GeminiClient:
                 "GEMINI_API_KEY is not set. Add your Google AI Studio key to .env "
                 "before running extraction."
             )
-        self.client = genai.Client(api_key=self.api_key)
+        # A timeout, because the SDK has none by default. A connection that
+        # stalls rather than failing hung a whole upload for half an hour with
+        # no log line and no error — indistinguishable, from the outside, from
+        # a model that was simply taking its time. The retry and fallback logic
+        # below only ever runs on requests that actually come back.
+        self.client = genai.Client(
+            api_key=self.api_key,
+            http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
+        )
         self.model = model or settings.gemini_model
         self._model_resolved = False
 
@@ -170,6 +183,14 @@ class GeminiClient:
                     temperature=0.1,
                 ),
             )
+        except httpx.TimeoutException as exc:
+            # Classified explicitly rather than by message: httpx raises these
+            # with an empty str(), so the marker matching below would read a
+            # timeout as an unknown fatal error and skip the fallback models
+            # that exist precisely for a model that has stopped answering.
+            raise TransientLLMError(
+                f"{self.model} did not answer within {REQUEST_TIMEOUT_MS // 1000}s"
+            ) from exc
         except Exception as exc:  # google-genai raises transport-specific errors
             message = str(exc)
             lowered = message.lower().replace("_", "")

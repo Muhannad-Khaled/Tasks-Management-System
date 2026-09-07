@@ -18,7 +18,7 @@ from app.grounding.engine import (
     render_evidence,
     verify_claims,
 )
-from app.models import ProjectTask
+from app.models import ProjectTask, TaskDependency
 from app.schemas.grounding import Claim, ClaimJudgement, ClaimVerdict, GroundingJudgement
 from app.validation.pipeline import (
     validate_business_rules,
@@ -225,8 +225,8 @@ def test_business_rules_stay_quiet_when_wording_spans_teams():
 
 def test_dependency_stage_reports_a_cycle():
     a, b = _task(id="A"), _task(id="B")
-    a.depends_on.append(b)
-    b.depends_on.append(a)
+    a.blockers.append(TaskDependency(upstream=b))
+    b.blockers.append(TaskDependency(upstream=a))
     result = validate_dependencies([a, b])
     assert not result.passed
     assert "circular" in result.detail
@@ -241,3 +241,31 @@ def test_timeline_stage_flags_work_past_the_sow_deadline():
 
 def test_timeline_stage_passes_without_a_deadline_to_check():
     assert validate_timeline([_task(due_date=date(2026, 12, 15))], None).passed
+
+
+def test_a_signal_word_inside_a_longer_word_does_not_reclassify_a_task():
+    """Found on a live run: "auth" inside "authorise".
+
+    A contract-signing task described as authorising commencement was filed
+    under the technical team, because a substring match cannot tell a word from
+    a fragment of one. The same trap is set by "engine" in "engineer", "sla" in
+    "translate" and "api" in "capital".
+    """
+    innocent = _task(
+        team="commercial",
+        title="Execute SOW and Data Processing Addendum",
+        description="Obtain a signed SOW to authorise commencement of implementation.",
+    )
+
+    assert validate_business_rules([innocent]).passed
+
+
+def test_the_same_words_used_properly_still_reclassify():
+    """The guard must not have been bought by disabling the check."""
+    misfiled = _task(
+        team="commercial",
+        title="Build the accrual engine",
+        description="Implement the points calculation engine behind the REST api endpoint.",
+    )
+
+    assert not validate_business_rules([misfiled]).passed

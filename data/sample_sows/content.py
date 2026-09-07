@@ -11,7 +11,11 @@ SOW_B  — realistic but gappy: missing counts, durations, team sizes
 SOW_C  — messy/adversarial: inconsistent numbering, contradictions,
          duplicated text, pasted email, vague boilerplate
          (exercises parsing validation and grounding).
+SOW_D  — full-length and contract-shaped: twenty sections of real SOW,
+         most of it not extractable (see content_d.py).
 """
+
+from content_d import SOW_D
 
 SOW_A = {
     "doc_title": "Statement of Work — Loyalty Program Implementation for CairoMart Retail Group",
@@ -276,4 +280,5 @@ ALL_SOWS = {
     "sow_a_cairomart": SOW_A,
     "sow_b_quickbite": SOW_B,
     "sow_c_glowbeauty": SOW_C,
+    "sow_d_nilebank": SOW_D,
 }

@@ -36,12 +36,6 @@ milestone_tasks = Table(
 )
 
 
-task_dependencies = Table(
-    "task_dependencies",
-    Base.metadata,
-    Column("task_id", ForeignKey("project_tasks.id"), primary_key=True),
-    Column("depends_on_id", ForeignKey("project_tasks.id"), primary_key=True),
-)
 
 
 class Project(Base):
@@ -63,6 +57,12 @@ class Project(Base):
     # with one board per task.
     board_id: Mapped[str] = mapped_column(String(255), default="")
     board_url: Mapped[str] = mapped_column(String(512), default="")
+    # When the board was last read successfully. Without it, "no differences"
+    # is unreadable: it could mean the board matches, or that nobody has looked
+    # since before the change was made. Those are opposite facts.
+    board_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Deleting a project must take its children with it. Without the cascade,
     # SQLAlchemy tries to null out project_id instead and the delete fails on
@@ -204,11 +204,45 @@ class ProjectTask(Base):
         back_populates="task", cascade="all, delete-orphan"
     )
     source_section: Mapped[SOWSection | None] = relationship()
-    depends_on: Mapped[list[ProjectTask]] = relationship(
-        secondary=task_dependencies,
-        primaryjoin=id == task_dependencies.c.task_id,
-        secondaryjoin=id == task_dependencies.c.depends_on_id,
+    blockers: Mapped[list[TaskDependency]] = relationship(
+        back_populates="task",
+        foreign_keys="TaskDependency.task_id",
+        cascade="all, delete-orphan",
     )
+
+    @property
+    def depends_on(self) -> list[ProjectTask]:
+        """The tasks that must finish first.
+
+        A plain property rather than a relationship: the arrows are now
+        association objects carrying their own provenance, and the great
+        majority of callers want the upstream tasks, not the paperwork.
+        """
+        return [link.upstream for link in self.blockers]
+
+
+class TaskDependency(Base):
+    """An arrow between two tasks, and where the ordering came from.
+
+    Modelled as a row of its own rather than a bare join table because a
+    dependency is a claim about the project: it moves every date downstream of
+    it, and until this existed it was the only such claim the platform could
+    not source. See ``ExtractedDependency`` for what the three statuses mean.
+    """
+
+    __tablename__ = "task_dependencies"
+
+    task_id: Mapped[str] = mapped_column(ForeignKey("project_tasks.id"), primary_key=True)
+    depends_on_id: Mapped[str] = mapped_column(ForeignKey("project_tasks.id"), primary_key=True)
+    # Empty means nobody recorded it — true of every arrow drawn before this
+    # column existed. Left blank rather than backfilled with a guess, which is
+    # the same mistake in miniature that the column exists to correct.
+    source_status: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    source_chunk_keys: Mapped[str] = mapped_column(Text, default="", server_default="")
+    rationale: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+    task: Mapped[ProjectTask] = relationship(foreign_keys=[task_id], back_populates="blockers")
+    upstream: Mapped[ProjectTask] = relationship(foreign_keys=[depends_on_id])
 
 
 class Person(Base):
@@ -224,6 +258,14 @@ class Person(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(255), unique=True)
+    # Their Trello account, when somebody has said which one it is. Empty is
+    # the normal state: the directory is the company's, and most of the people
+    # in it will never have a Trello login. A card still carries their name in
+    # its body — this is only what lets Trello put a face on the card.
+    #
+    # Never guessed from the name. Two people called Ahmed Hassan would be one
+    # wrong assignment away from each other, and the board would look right.
+    trello_member_id: Mapped[str] = mapped_column(String(64), default="", server_default="")
     # Kept rather than deleted: a person who has left still explains who was
     # assigned what on a plan that already ran.
     active: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -8,6 +8,7 @@ copilot pages described in the brief.
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 
 import httpx
 import streamlit as st
@@ -31,7 +32,12 @@ SOURCE_BADGES = {
 st.set_page_config(page_title="SOW → Project", page_icon="📄", layout="wide")
 
 
-def api(method: str, path: str, **kwargs):
+def api(method: str, path: str, quiet: bool = False, **kwargs):
+    """Call the API. `quiet` swallows a 4xx/5xx for calls that may simply not apply.
+
+    Only for optional extras — a board that does not exist yet, a Trello that
+    is unreachable. Anything the page is actually about must still shout.
+    """
     try:
         response = httpx.request(method, f"{API_BASE}{path}", timeout=API_TIMEOUT, **kwargs)
     except httpx.TimeoutException:
@@ -52,6 +58,8 @@ def api(method: str, path: str, **kwargs):
         st.error(f"Cannot reach the API at {API_BASE}. Is uvicorn running?\n\n{exc}")
         st.stop()
     if response.status_code >= 400:
+        if quiet:
+            return None
         detail = response.json().get("detail", response.text) if response.content else response.text
         st.error(friendly_error(response.status_code, str(detail)))
         return None
@@ -125,6 +133,38 @@ def render_upload() -> None:
                 st.warning(warning)
 
 
+DEPENDENCY_PROVENANCE = {
+    "explicit": ("📄", "the SOW states this ordering"),
+    "inferred": ("🔗", "derived from the SOW, not stated in it"),
+    "assumed": ("⚠️", "not in the SOW — this ordering is the system's judgement"),
+    "": ("❓", "recorded before dependencies carried a source"),
+}
+
+
+def render_blockers(blockers: list[dict], evidence_by_key: dict) -> None:
+    """What this task waits on, and on whose authority.
+
+    Shown per arrow rather than as one line of titles. An arrow is what moves
+    every date after it, so the PM deciding whether a deadline is real needs
+    to see which of them the SOW actually asked for.
+    """
+    if not blockers:
+        return
+    st.caption("Blocked by:")
+    for blocker in blockers:
+        icon, meaning = DEPENDENCY_PROVENANCE.get(
+            blocker["source_status"], DEPENDENCY_PROVENANCE[""]
+        )
+        st.caption(f"  {icon} **{blocker['title']}** — {meaning}")
+        if blocker["rationale"]:
+            st.caption(f"    _{blocker['rationale']}_")
+        for key in blocker["source_chunk_keys"]:
+            evidence = evidence_by_key.get(key)
+            if evidence:
+                page = f" · page {evidence['page']}" if evidence["page"] else ""
+                render_evidence(key, page, evidence["text"])
+
+
 def render_evidence(key: str, page: str, text: str) -> None:
     """Show a cited chunk the way it reads in the SOW.
 
@@ -145,6 +185,7 @@ def render_evidence(key: str, page: str, text: str) -> None:
 
 
 UNASSIGNED = "— nobody yet —"
+NOT_ON_TRELLO = "— not on Trello —"
 
 
 def _save_roles(person_id: str, name: str) -> None:
@@ -156,7 +197,34 @@ def _save_roles(person_id: str, name: str) -> None:
     )
 
 
-def render_people_directory() -> list[dict]:
+def render_trello_link(person: dict, members: list[dict]) -> None:
+    """Pick which Trello account this person is, if any.
+
+    Never matched on name. Two people called Ahmed Hassan would be one wrong
+    assignment apart, and the board would look perfectly correct.
+    """
+    labels = {NOT_ON_TRELLO: ""}
+    for member in members:
+        labels[f"@{member['username']} · {member['full_name']}".strip(" ·")] = member["id"]
+    by_id = {v: k for k, v in labels.items()}
+    current = by_id.get(person.get("trello_member_id", ""), NOT_ON_TRELLO)
+
+    choice = st.selectbox(
+        "Trello",
+        options=list(labels),
+        index=list(labels).index(current),
+        key=f"trello-{person['id']}",
+        label_visibility="collapsed",
+    )
+    if labels[choice] != person.get("trello_member_id", ""):
+        result = api(
+            "PATCH", f"/people/{person['id']}/trello", json={"member_id": labels[choice]}
+        )
+        if result is not None:
+            st.rerun()
+
+
+def render_people_directory(board_members: list[dict]) -> list[dict]:
     """The company's people, shared by every project.
 
     Typed by a person, never extracted. The roster comes from the SOW and says
@@ -188,8 +256,17 @@ def render_people_directory() -> list[dict]:
         ):
             st.rerun()
 
+        if board_members:
+            st.caption(
+                "Linking somebody to a Trello account assigns them on the card "
+                "itself, not just in its text. Only accounts already on this "
+                "board are offered — Trello refuses the rest."
+            )
+
         for person in active:
-            row, action = st.columns([5, 1])
+            row, link, action = (
+                st.columns([4, 2, 1]) if board_members else (*st.columns([5, 1]), None)
+            )
             with row:
                 # on_change, not a comparison after the fact. A keyed widget
                 # reports its session value on every rerun, so writing whenever
@@ -203,7 +280,11 @@ def render_people_directory() -> list[dict]:
                     on_change=_save_roles,
                     args=(person["id"], person["name"]),
                 )
-            if action.button("Remove", key=f"rm-{person['id']}") and api(
+            if board_members:
+                with link:
+                    render_trello_link(person, board_members)
+            target = action if action is not None else link
+            if target.button("Remove", key=f"rm-{person['id']}") and api(
                 "DELETE", f"/people/{person['id']}"
             ):
                 st.rerun()
@@ -442,7 +523,22 @@ def render_push_button(column, project_id: str, task: dict) -> None:
 DRIFT_ICONS = {"moved": "↔️", "edited": "✏️", "archived": "📦", "deleted": "🗑️"}
 
 
-def render_board_drift(project_id: str, drift: list[dict]) -> None:
+def since(timestamp: str | None) -> str:
+    """How long ago, in words a glance can take in."""
+    if not timestamp:
+        return "never"
+    seen = datetime.fromisoformat(timestamp)
+    seconds = (datetime.now(UTC) - seen).total_seconds()
+    if seconds < 90:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} min ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    return seen.strftime("%d %b %H:%M")
+
+
+def render_board_drift(project_id: str, drift: list[dict], checked_at: str | None) -> None:
     """Differences between the board and the plan, with a way to look again.
 
     Nothing here is a button that fixes anything. Every one of these is
@@ -462,7 +558,15 @@ def render_board_drift(project_id: str, drift: list[dict]) -> None:
                 st.rerun()
 
         if not drift:
-            st.caption("The board matches the plan.")
+            # Deliberately not "the board matches the plan". This is a report
+            # about the last look, and a look taken before the change was made
+            # says nothing about the board now — but the old wording read as
+            # an all-clear either way.
+            st.caption(
+                f"Nothing differed when the board was last read ({since(checked_at)})."
+                if checked_at
+                else "This board has not been read yet."
+            )
             return
 
         for item in drift:
@@ -481,6 +585,7 @@ def render_board_drift(project_id: str, drift: list[dict]) -> None:
             ):
                 st.success("Put back, with its comments and ticks.")
                 st.rerun()
+        st.caption(f"Board last read {since(checked_at)}.")
         st.caption(
             "None of these were changed back. Push the task again to make the "
             "board match the plan, or edit the task if the board was right."
@@ -645,7 +750,10 @@ def render_structure(project_id: str) -> None:
     if not structure:
         return
 
-    people = render_people_directory()
+    # 502 when Trello is unreachable, 409 before a board exists. Neither is a
+    # reason to withhold the directory, so the picker simply does not appear.
+    board_members = api("GET", f"/projects/{project_id}/board-members", quiet=True) or []
+    people = render_people_directory(board_members)
     roles = api("GET", f"/projects/{project_id}/roles") or []
     if roles:
         with st.expander("🧑‍💼 Who is on this project", expanded=False):
@@ -876,8 +984,7 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                     )
                     if task["start_date"]:
                         st.caption(f"Scheduled: {task['start_date']} → {task['due_date']}")
-                    if task["depends_on"]:
-                        st.caption("Blocked by: " + "; ".join(task["depends_on"]))
+                    render_blockers(task["depends_on"], evidence_by_key)
                     if task["source_section"]:
                         st.caption(f"SOW section: {task['source_section']}")
                     for key in task["source_chunk_keys"]:
@@ -915,7 +1022,11 @@ def render_project(project_id: str, projects: list[dict]) -> None:
             st.success("No assumptions were needed — the SOW covered everything extracted.")
 
     with approve_tab:
-        render_board_drift(project_id, api("GET", f"/projects/{project_id}/drift") or [])
+        render_board_drift(
+            project_id,
+            api("GET", f"/projects/{project_id}/drift") or [],
+            project.get("board_checked_at"),
+        )
         st.caption(
             "Nothing reaches Trello until a PM approves. Push tasks one at a time "
             "from the Tasks tab as you finish reviewing them, or approve the plan "

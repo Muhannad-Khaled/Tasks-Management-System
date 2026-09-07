@@ -98,6 +98,7 @@ def sync_tasks(
 
     result.warnings.extend(check_drift(db, project, tasks, board_tasks, adapter))
     result.warnings.extend(_dangling_dependencies(tasks))
+    result.warnings.extend(_unassignable_owners(tasks, board_tasks))
     refresh_status(project)
     db.commit()
     return result
@@ -134,6 +135,31 @@ def check_drift(
     # Only the new ones are worth saying out loud; a difference the PM has
     # already been shown does not need repeating on every push.
     return [row.detail for row in fresh]
+
+
+def _unassignable_owners(
+    tasks: list[ProjectTask], board_tasks: dict[str, BoardTask]
+) -> list[str]:
+    """Owners the card names but cannot be assigned to.
+
+    Silence here reads as success. The card says "Owner: Ahmed Hassan" whether
+    or not Trello put him on it, so a PM who linked nobody would see a board
+    that looks staffed and a team that was never notified of anything.
+    """
+    orphaned: dict[str, int] = {}
+    for task in tasks:
+        board_task = board_tasks.get(task.id)
+        if board_task and board_task.assignee_name and not board_task.assignee_member_id:
+            orphaned[board_task.assignee_name] = orphaned.get(board_task.assignee_name, 0) + 1
+    if not orphaned:
+        return []
+    named = ", ".join(f"{name} ({count})" for name, count in sorted(orphaned.items()))
+    return [
+        (
+            "Named on their cards but not assigned on Trello, having no linked "
+            f"account: {named}. Link them under People on the Structure tab."
+        )
+    ]
 
 
 def _dangling_dependencies(tasks: list[ProjectTask]) -> list[str]:

@@ -69,6 +69,20 @@ class ProjectSummary(BaseModel):
     task_count: int
     assumption_count: int
     board_url: str = ""
+    board_checked_at: datetime | None = None
+
+
+class DependencyView(BaseModel):
+    """One arrow, and what it rests on.
+
+    source_status is empty for arrows drawn before provenance was recorded.
+    Rendered as unknown rather than assumed to be anything.
+    """
+
+    title: str
+    source_status: str
+    source_chunk_keys: list[str]
+    rationale: str
 
 
 class TaskView(BaseModel):
@@ -90,7 +104,7 @@ class TaskView(BaseModel):
     review_status: str
     review_note: str
     regeneration_count: int
-    depends_on: list[str]
+    depends_on: list[DependencyView]
     external_ref: str
     board_dirty: bool
 
@@ -167,6 +181,7 @@ def list_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
             task_count=db.query(ProjectTask).filter(ProjectTask.project_id == p.id).count(),
             assumption_count=db.query(Assumption).filter(Assumption.project_id == p.id).count(),
             board_url=p.board_url,
+            board_checked_at=p.board_checked_at,
         )
         for p in projects
     ]
@@ -195,7 +210,15 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
         review_status=task.review_status,
         review_note=task.review_note,
         regeneration_count=task.regeneration_count,
-        depends_on=[d.title for d in task.depends_on],
+        depends_on=[
+            DependencyView(
+                title=link.upstream.title,
+                source_status=link.source_status,
+                source_chunk_keys=[k for k in link.source_chunk_keys.split(",") if k],
+                rationale=link.rationale,
+            )
+            for link in task.blockers
+        ],
         external_ref=task.external_ref,
         board_dirty=task.board_dirty,
     )
@@ -231,11 +254,42 @@ def known_roles() -> list[dict]:
     return [{"title": r.title, "team": str(r.team)} for r in TEAM_ROLES]
 
 
+@router.get("/{project_id}/board-members")
+def board_members(project_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    """The Trello accounts this board will accept an assignment for.
+
+    Read live rather than stored. Trello refuses idMembers for anybody who is
+    not on the board, so an offline copy of this list would let the PM pick
+    somebody the push then rejects — and the failure would arrive minutes
+    later, attached to a card, with no obvious cause.
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if not project.board_id:
+        raise HTTPException(409, "This project has no board yet.")
+
+    try:
+        adapter = TrelloAdapter()
+        try:
+            return adapter.board_members(project.board_id)
+        finally:
+            adapter.close()
+    except TrelloError as exc:
+        raise HTTPException(502, f"Could not read the board: {exc}") from exc
+
+
 @people_router.get("")
 def list_people(db: Session = Depends(get_db)) -> list[dict]:
     rows = db.query(Person).order_by(Person.active.desc(), Person.name).all()
     return [
-        {"id": p.id, "name": p.name, "active": p.active, "roles": p.role_titles}
+        {
+            "id": p.id,
+            "name": p.name,
+            "active": p.active,
+            "roles": p.role_titles,
+            "trello_member_id": p.trello_member_id,
+        }
         for p in rows
     ]
 
@@ -298,6 +352,60 @@ def set_person_roles(person_id: str, body: PersonIn, db: Session = Depends(get_d
     _set_capabilities(db, person, body.roles)
     db.commit()
     return {"id": person.id, "name": person.name, "roles": person.role_titles}
+
+
+class TrelloLink(BaseModel):
+    # "" unlinks. The field is required rather than defaulted so that clearing
+    # a link is something the caller asked for and not something a missing key
+    # did quietly.
+    member_id: str
+
+
+@people_router.patch("/{person_id}/trello")
+def link_person_to_trello(
+    person_id: str, body: TrelloLink, db: Session = Depends(get_db)
+) -> dict:
+    """Say which Trello account is this person.
+
+    Cards already on the board are marked out of date, because the name on
+    them is now capable of being an assignment and is not one yet.
+    """
+    person = db.get(Person, person_id)
+    if not person:
+        raise HTTPException(404, "Person not found")
+
+    member_id = body.member_id.strip()
+    if member_id and member_id != person.trello_member_id:
+        clash = (
+            db.query(Person)
+            .filter(Person.trello_member_id == member_id, Person.id != person.id)
+            .first()
+        )
+        if clash:
+            # One account, one person. Two directory entries sharing a Trello
+            # login would assign both of them the same cards and neither of
+            # them would be wrong on the board.
+            raise HTTPException(409, f"That Trello account is already {clash.name}.")
+
+    if member_id != person.trello_member_id:
+        person.trello_member_id = member_id
+        _restaff_cards_of(db, person)
+    db.commit()
+    return {"id": person.id, "name": person.name, "trello_member_id": person.trello_member_id}
+
+
+def _restaff_cards_of(db: Session, person: Person) -> int:
+    """Mark every card this person owns as out of date with the plan."""
+    marked = 0
+    for role in db.query(ProjectRole).filter(ProjectRole.person_id == person.id):
+        for task in db.query(ProjectTask).filter(
+            ProjectTask.project_id == role.project_id,
+            ProjectTask.assignee_role == role.role_title,
+            ProjectTask.external_ref != "",
+        ):
+            task.board_dirty = True
+            marked += 1
+    return marked
 
 
 @people_router.delete("/{person_id}")
@@ -577,6 +685,9 @@ def get_all_evidence(project_id: str, db: Session = Depends(get_db)) -> dict:
     """
     tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project_id).all()
     keys = {k for t in tasks for k in t.source_chunk_keys.split(",") if k}
+    # Dependencies cite too, and not always the same chunks their tasks do. An
+    # arrow whose evidence went unfetched would render as a bare claim.
+    keys |= {k for t in tasks for link in t.blockers for k in link.source_chunk_keys.split(",") if k}
     if not keys:
         return {}
     chunks = db.query(SOWChunk).filter(SOWChunk.chunk_key.in_(keys)).all()

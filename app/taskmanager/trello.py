@@ -98,6 +98,20 @@ class TrelloAdapter(TaskManagerInterface):
             existing[name] = created["id"]
         return existing
 
+    def board_members(self, board_id: str) -> list[dict]:
+        """Everybody Trello will let this board's cards be assigned to."""
+        rows = self._request(
+            "GET", f"/boards/{board_id}/members", fields="id,username,fullName"
+        ) or []
+        return [
+            {
+                "id": row["id"],
+                "username": row.get("username", ""),
+                "full_name": row.get("fullName", ""),
+            }
+            for row in rows
+        ]
+
     def expected_location(self, task: BoardTask) -> str:
         """The list a task's card belongs in, by team."""
         target = task.team.capitalize()
@@ -163,6 +177,8 @@ class TrelloAdapter(TaskManagerInterface):
             }
             if task.due_date:
                 params["due"] = task.due_date.isoformat()
+            if task.assignee_member_id:
+                params["idMembers"] = task.assignee_member_id
             card = self._request("POST", "/cards", **params)
             created[task.task_id] = card["id"]
             self._add_checklists(card["id"], task)
@@ -181,6 +197,12 @@ class TrelloAdapter(TaskManagerInterface):
             # task has since had its schedule taken away.
             "due": task.due_date.isoformat() if task.due_date else "",
         }
+        # Only sent when the plan knows who it is. Sending an empty list would
+        # strip whoever a person had assigned by hand on the board, which is
+        # the platform overruling a human on the one field it usually cannot
+        # fill in at all.
+        if task.assignee_member_id:
+            params["idMembers"] = task.assignee_member_id
         try:
             self._request("PUT", f"/cards/{external_id}", **params)
         except TrelloError as exc:

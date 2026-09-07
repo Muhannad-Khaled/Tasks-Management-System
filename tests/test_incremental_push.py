@@ -224,7 +224,7 @@ def test_pushing_ahead_of_a_blocker_says_so(client, project, board):
 
     warnings = push(client, project, dependent).json()["warnings"]
 
-    assert any(dependent["depends_on"][0] in w for w in warnings)
+    assert any(dependent["depends_on"][0]["title"] in w for w in warnings)
     # A warning, not a refusal: the PM reviews in whatever order suits them.
     assert board.cards
 
@@ -563,3 +563,57 @@ def test_a_regenerated_task_marks_its_card_out_of_date(client, project, board):
 
     after = {t["id"]: t for t in client.get(f"/projects/{project.id}/tasks").json()}
     assert after[task["id"]]["board_dirty"] is True
+
+
+def test_a_successful_read_records_when_the_board_was_looked_at(client, project, board):
+    """'No differences' means nothing without knowing when it was checked."""
+    from app.taskmanager.watch import check_project
+
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    db = next(iter(app.dependency_overrides.values()))()
+    fresh = db.get(Project, project.id)
+    assert fresh.board_checked_at is None
+
+    check_project(db, fresh, board)
+
+    assert fresh.board_checked_at is not None
+
+
+def test_a_board_that_could_not_be_read_is_not_marked_as_checked(client, project, board):
+    """A time saying the board was looked at, when it was not, is worse than none.
+
+    It turns 'nobody has looked since you made that change' into 'the board
+    matches the plan' — the exact confusion the timestamp was added to end.
+    """
+    from app.taskmanager.trello import TrelloError
+    from app.taskmanager.watch import check_project
+
+    task = tasks_of(client, project)[0]
+    approve(client, project, task)
+    push(client, project, task)
+    db = next(iter(app.dependency_overrides.values()))()
+    fresh = db.get(Project, project.id)
+
+    def refuse(board_id: str):
+        raise TrelloError("Trello is down")
+
+    board.card_snapshots = refuse
+    with pytest.raises(TrelloError):
+        check_project(db, fresh, board)
+
+    assert fresh.board_checked_at is None
+
+
+def test_the_watch_interval_comes_from_the_env_file():
+    """A setting that silently ignores .env is a setting nobody has changed.
+
+    BOARD_WATCH_SECONDS was read straight from os.environ while every other
+    setting came from .env, so putting it in the file did nothing at all and
+    said nothing about it.
+    """
+    from app.core.config import Settings
+
+    assert Settings(_env_file=None).board_watch_seconds is None, "no default hidden here"
+    assert Settings(_env_file=None, board_watch_seconds=45).board_watch_seconds == 45
