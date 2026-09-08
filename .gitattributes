@@ -1,0 +1,6 @@
+# The SOW corpus is the fixture every extraction test measures itself against,
+# and git was treating these as text: a checkout on Windows would rewrite line
+# endings inside the PDF byte streams. It happened to survive once, verified by
+# re-parsing; nothing about that was guaranteed.
+*.pdf binary
+*.docx binary

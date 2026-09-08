@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from typing import Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "e2f4a91c7b30"
