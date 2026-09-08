@@ -20,7 +20,14 @@ API_BASE = os.environ.get("API_BASE", "http://127.0.0.1:8000")
 # A clean run takes about a minute. The headroom is for Gemini answering 503
 # under load: the client retries with backoff and then tries the fallback
 # models, and that path is far slower than the work itself.
-API_TIMEOUT = float(os.environ.get("API_TIMEOUT", "180"))
+#
+# 180 was not enough headroom. On 2026-09-08 the primary model was returning
+# 503 on every call, so all five fell through to the fallback and the run took
+# 343 seconds — one extraction alone took 138. The upload had succeeded and
+# the project was in the sidebar; what the person saw was a red box telling
+# them it had not answered. Giving up earlier than the server does turns a
+# slow success into a visible failure.
+API_TIMEOUT = float(os.environ.get("API_TIMEOUT", "600"))
 
 TEAM_COLORS = {"commercial": "🔵", "technical": "🟣", "operations": "🟠"}
 SOURCE_BADGES = {
