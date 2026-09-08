@@ -16,37 +16,62 @@ from app.models import (
     SOWSection,
     UserStory,
 )
+from app.schemas.enums import Team
 from app.taskmanager.base import BoardBlocker, BoardCase, BoardTask
 
 
-def _artifacts_by_requirement(db: Session, project_id: str) -> dict[str, dict]:
-    """Acceptance-criteria counts and assumed test fields, keyed by requirement.
+def _empty_artifacts() -> dict:
+    return {"criteria": [], "assumed_fields": set(), "cases": [], "story": None}
 
-    A task inherits these through the requirement it implements, which is the
-    only link between a unit of work and the tests that will judge it.
+
+def _collect(entry: dict, story: UserStory) -> None:
+    entry["criteria"].extend(c.rendered() for c in story.acceptance_criteria)
+    for case in story.test_cases:
+        assumed = [f for f in case.assumed_fields.split(",") if f]
+        entry["assumed_fields"].update(assumed)
+        entry["cases"].append(
+            BoardCase(
+                title=case.title,
+                expected_result=case.expected_result,
+                rests_on_assumption=case.rests_on_assumption,
+                assumed_fields=assumed,
+            )
+        )
+
+
+def artifacts_for_tasks(db: Session, project_id: str) -> dict[str, dict]:
+    """What each task's card should carry, keyed by task id.
+
+    Engineer stories are attached to a task and go to that card alone. Anything
+    else is reached through the requirement, which is the only link a client
+    story has to a unit of work.
+
+    That distinction is the whole point of this function. Inheriting everything
+    through the requirement meant three technical tasks under one requirement
+    were handed the same criteria and the same tests, so a card for writing a
+    design document arrived carrying the acceptance criteria of the accrual
+    engine — plausible, specific, and about different work.
     """
-    stories = (
-        db.query(UserStory)
-        .filter(UserStory.project_id == project_id, UserStory.requirement_id.isnot(None))
-        .all()
-    )
+    stories = db.query(UserStory).filter(UserStory.project_id == project_id).all()
+
+    by_requirement: dict[str, dict] = {}
     out: dict[str, dict] = {}
     for story in stories:
-        entry = out.setdefault(
-            story.requirement_id, {"criteria": [], "assumed_fields": set(), "cases": []}
-        )
-        entry["criteria"].extend(c.text for c in story.acceptance_criteria)
-        for case in story.test_cases:
-            assumed = [f for f in case.assumed_fields.split(",") if f]
-            entry["assumed_fields"].update(assumed)
-            entry["cases"].append(
-                BoardCase(
-                    title=case.title,
-                    expected_result=case.expected_result,
-                    rests_on_assumption=case.rests_on_assumption,
-                    assumed_fields=assumed,
-                )
-            )
+        if story.task_id:
+            entry = out.setdefault(story.task_id, _empty_artifacts())
+            entry["story"] = story
+            _collect(entry, story)
+        elif story.requirement_id:
+            _collect(by_requirement.setdefault(story.requirement_id, _empty_artifacts()), story)
+
+    for task in db.query(ProjectTask).filter(ProjectTask.project_id == project_id):
+        # A task with its own engineer story keeps it. Falling back to the
+        # requirement here would put the duplication straight back.
+        if task.id in out or not task.requirement_id:
+            continue
+        inherited = by_requirement.get(task.requirement_id)
+        if inherited is not None:
+            out[task.id] = inherited
     return out
 
 
@@ -94,7 +119,8 @@ def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> Boa
     section = (
         db.get(SOWSection, task.source_sow_section_id) if task.source_sow_section_id else None
     )
-    artifacts = derived.get(task.requirement_id or "", {})
+    artifacts = derived.get(task.id, {})
+    story = artifacts.get("story")
     return BoardTask(
         task_id=task.id,
         title=task.title,
@@ -111,6 +137,12 @@ def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> Boa
         acceptance_criteria=artifacts.get("criteria", []),
         assumed_test_fields=sorted(artifacts.get("assumed_fields", set())),
         test_cases=artifacts.get("cases", []),
+        story_sentence=story.sentence if story is not None else "",
+        technical_notes=story.technical_notes if story is not None else "",
+        # Only a task that was meant to have build detail can be missing it.
+        # Saying "the SOW specified nothing" on a contract-signing card would
+        # be true and pointless.
+        expects_technical_notes=task.team == str(Team.TECHNICAL),
         source_section=section.title if section else "",
         source_chunk_keys=[k for k in task.source_chunk_keys.split(",") if k],
         grounding_score=task.grounding_score,

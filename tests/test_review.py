@@ -187,7 +187,7 @@ def test_rejecting_without_regeneration_just_marks_the_task(client, db, project)
 
 def test_review_state_reports_readiness(client, db, project):
     state = client.get(f"/projects/{project.id}/review").json()
-    assert state["total"] == 3
+    assert state["total"] == 4
     assert not state["ready"], "nothing has been reviewed yet"
 
     for task in _tasks(db, project):

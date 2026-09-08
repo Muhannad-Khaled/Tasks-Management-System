@@ -287,55 +287,86 @@ Return a single replacement task.
 
 TECHNICAL_ARTIFACTS = Prompt(
     name="technical_artifacts",
-    version="v1",
-    system=(
-        "You turn delivery requirements into user stories, the conditions that "
-        "make each story done, and the tests that prove it.\n\n"
-        "A user story says who wants something, what they want to do, and why. "
-        "The actor must be someone who *receives* value from the finished "
-        "system: a merchant, a customer, a cashier, a merchant's store "
-        "manager. Never someone delivering the project.\n\n"
-        "This is the easiest thing to get wrong, because the requirements are "
-        "written from the delivery side. Watch for it:\n"
-        "  wrong: 'As a support agent, I want to deliver 2 days of training'\n"
-        "  right: 'As a store cashier, I want to be trained on enrolment and "
-        "redemption so that I can serve customers without help'\n"
-        "  wrong: 'As a QA engineer, I want to run end-to-end tests'\n"
-        "  right: 'As a merchant, I want points to accrue correctly on every "
-        "till so that customers are not shortchanged'\n\n"
-        "If the actor is a role on the delivery team, the sentence is a task "
-        "in disguise: it describes work being done rather than value someone "
-        "receives, and nobody outside the project can judge it done.\n\n"
-        "Acceptance criteria are the conditions that decide whether the story "
-        "is finished. Each states one thing, and each must be observable.\n\n"
-        "A test case is a check somebody will actually run: a starting state, "
-        "one action, and the result that must be observed.\n\n"
-        "Rules:\n"
-        "- Every story must name the requirement it comes from, using the "
-        "requirement ids given. Do not invent an id.\n"
-        "- Use the working values listed below when a test needs a concrete "
-        "number, so the case is runnable.\n"
-        "- Whenever a test case relies on one of those values, list the field "
-        "key in depends_on_fields. Some of them are values the SOW never "
-        "stated, and a case built on one must be marked before anyone runs it "
-        "and reports the system correct. Getting this list right matters more "
-        "than the wording of the case.\n"
-        "- Do not invent requirements. Cover the ones given and stop."
-    ),
-    template="""Write user stories, acceptance criteria and test cases for these
-requirements.
+    version="v2",
+    system="""You write two kinds of user story, and confusing them is the main way
+this task goes wrong.
 
-=== REQUIREMENTS ===
+CLIENT STORIES, one per requirement. These say what somebody outside the
+project gets. The actor must be a person who *receives* value from the
+finished system: a merchant, a cardholder, a cashier, a store manager. Never
+someone delivering the project.
+  wrong: 'As a support agent, I want to deliver 2 days of training'
+  right: 'As a store cashier, I want to be trained on enrolment and redemption
+         so that I can serve customers without help'
+If the actor is a role on the delivery team, the sentence is a task in
+disguise: it describes work being done rather than value someone receives, and
+nobody outside the project can judge it done.
+
+ENGINEER STORIES, one per technical task listed below. These are the opposite,
+and the rule above does not apply to them: they describe how the assigned
+engineer will build that one task. Write the capability in technical terms —
+the interface, the component, the mechanism — at a level the named owner would
+recognise as their own work. Do not write the actor; it is taken from the role
+already assigned to the task.
+  weak:   'implement the loyalty feature'
+  strong: 'expose the accrual endpoint behind the switch interface and
+          reconcile it against the core banking ledger nightly'
+
+THE HARD RULE, and the one worth failing this task over. Technical notes and
+every measured threshold come only from the project details listed below.
+Those are what the signed document actually said. Naming a library, framework,
+protocol, vendor or number that is not in that list makes the output worse
+than useless: an engineer will build to it, and nobody will ever find out
+where it came from. If the details do not cover something, leave the field
+empty. An empty field is a correct answer here.
+
+Whenever you fill technical_notes or a measure, copy the exact names of the
+details you used into source_detail_names. A name that is not on the list will
+be rejected and the content dropped.
+
+Acceptance criteria state one observable condition each. Attach a measure when
+the details give one, and only then.
+
+A test case is a check somebody will actually run: a starting state, one
+action, and the result that must be observed.
+
+Rules:
+- Every client story must name the requirement it comes from, using the
+  requirement ids given. Do not invent an id.
+- Every engineer story must name a task id exactly as given.
+- Use the working values listed below when a test needs a concrete number, so
+  the case is runnable.
+- Whenever a test case relies on one of those values, list the field key in
+  depends_on_fields. Some of them are values the SOW never stated, and a case
+  built on one must be marked before anyone runs it and reports the system
+  correct. Getting this list right matters more than the wording of the case.
+- Do not invent requirements or tasks. Cover the ones given and stop.
+""",
+    template="""Write the derived artifacts for this project.
+
+=== REQUIREMENTS (one client story each) ===
 {requirements}
 === END REQUIREMENTS ===
 
-Working values the plan currently runs on. Use these for concrete numbers, and
-name the field key in depends_on_fields wherever a test relies on one:
+=== TECHNICAL TASKS (one engineer story each) ===
+{technical_tasks}
+=== END TECHNICAL TASKS ===
+
+=== PROJECT DETAILS ===
+The only permitted source for technical notes and measured thresholds.
+Everything here came from the signed document. Nothing outside it did.
+
+{project_details}
+=== END PROJECT DETAILS ===
+
+Working values the plan currently runs on. Use these for concrete numbers in
+test cases, and name the field key in depends_on_fields wherever a test relies
+on one:
 
 {working_values}
 
-Cover every requirement. Give each story 2-4 acceptance criteria and at least
-one test case.
+Cover every requirement and every technical task. Give each story 2-4
+acceptance criteria and at least one test case.
 """,
 )
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.schemas.artifacts import (
     DraftAcceptanceCriterion,
+    DraftEngineerStory,
     DraftTestCase,
     DraftUserStory,
     TechnicalArtifacts,
@@ -62,7 +63,7 @@ class StubLLM:
         if schema is GroundingJudgement:
             return self._judgement(kwargs.get("claims", ""))
         if schema is TechnicalArtifacts:
-            return self._artifacts()
+            return self._artifacts(kwargs.get("technical_tasks", ""))
         if schema is ExtractedTask:
             return self._regenerated(kwargs.get("title", "Task"))
         return self._extraction()
@@ -84,7 +85,7 @@ class StubLLM:
             source_chunk_keys=self.citations,
         )
 
-    def _artifacts(self) -> TechnicalArtifacts:
+    def _artifacts(self, technical_tasks: str = "") -> TechnicalArtifacts:
         """One story per requirement, covering the cases that matter.
 
         US-002 carries a test case resting on the earn rate, which the stub's
@@ -167,8 +168,64 @@ class StubLLM:
                         )
                     ],
                 ),
-            ]
+            ],
+            engineer_stories=self._engineer_stories(technical_tasks),
         )
+
+    def _engineer_stories(self, technical_tasks: str) -> list[DraftEngineerStory]:
+        """One per technical task, taking the ids the prompt actually rendered.
+
+        Parsing them back out is the point: an engineer story keyed to a task
+        id the stub invented would pass every assertion here while the real
+        call, which sees database ids, dropped every story it produced.
+
+        The first story cites a detail the stub's extraction really contains;
+        every later one cites a detail that does not exist, so both halves of
+        the sourcing rule are exercised on any project with two or more
+        technical tasks.
+        """
+        ids = re.findall(r"^\[([0-9a-f-]{36})\]", technical_tasks, re.MULTILINE)
+        stories = []
+        for index, task_id in enumerate(ids):
+            grounded = index == 0
+            stories.append(
+                DraftEngineerStory(
+                    story_key=f"ES-{index + 1:03d}",
+                    task_id=task_id,
+                    capability="expose the accrual endpoint and reconcile it nightly",
+                    benefit="points land on the right account without manual repair",
+                    technical_notes=(
+                        "POST /points/accrue, called synchronously from the till."
+                        if grounded
+                        else "Built on Redis Streams with a Kafka fallback."
+                    ),
+                    source_detail_names=(
+                        ["Points accrual endpoint"] if grounded else ["A detail nobody extracted"]
+                    ),
+                    acceptance_criteria=[
+                        DraftAcceptanceCriterion(
+                            criterion_key=f"AC-1{index:02d}",
+                            text="The endpoint returns within the agreed latency.",
+                            measure="under 400ms" if grounded else "under 50ms",
+                            source_detail_names=(
+                                ["Points accrual endpoint"]
+                                if grounded
+                                else ["A detail nobody extracted"]
+                            ),
+                        )
+                    ],
+                    test_cases=[
+                        DraftTestCase(
+                            case_key=f"TC-1{index:02d}",
+                            title="Accrual endpoint holds under load",
+                            action="Drive the endpoint at the agreed peak rate",
+                            expected_result="Every call succeeds within the latency budget",
+                            kind=TestKind.TECHNICAL_VALIDATION,
+                        )
+                    ],
+                )
+            )
+        return stories
 
     def _batch_claims(self, rendered_tasks: str) -> BatchClaimSet:
         """Two claims per task: one qualitative, one quantitative."""
@@ -354,6 +411,23 @@ class StubLLM:
                             rationale="Integration work starts after the contract is signed.",
                         )
                     ],
+                    source_status="explicit",
+                    source_chunk_keys=self.citations,
+                ),
+                # A second technical task under REQ-002, which is the shape
+                # that produced the bug: two units of work sharing one
+                # requirement were handed one another's acceptance criteria,
+                # so a design-document card carried the API's tests.
+                ExtractedTask(
+                    task_id="T-004",
+                    milestone="Go-live",
+                    requirement_id="REQ-002",
+                    assignee_role="Technical Lead",
+                    team="technical",
+                    title="Author the integration design document",
+                    description="Interfaces, error handling and rollback, for review.",
+                    priority="medium",
+                    estimated_hours=20,
                     source_status="explicit",
                     source_chunk_keys=self.citations,
                 ),

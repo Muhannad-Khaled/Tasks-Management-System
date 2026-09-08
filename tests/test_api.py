@@ -34,7 +34,7 @@ def seeded_project(db):
 
 def test_tasks_expose_their_evidence_keys(client, seeded_project):
     tasks = client.get(f"/projects/{seeded_project.id}/tasks").json()
-    assert len(tasks) == 3
+    assert len(tasks) == 4
     assert all(t["source_chunk_keys"] for t in tasks)
 
 
@@ -133,9 +133,9 @@ def test_grounding_endpoint_reports_scores_and_names_the_failures(client, seeded
     data = client.get(f"/projects/{seeded_project.id}/grounding").json()
     # The stub supports one claim per task and fails the quantitative one.
     assert data["overall_score"] == pytest.approx(0.5)
-    assert data["total_claims"] == 6
+    assert data["total_claims"] == 8
     assert set(data["by_team"]) == {"commercial", "technical", "operations"}
-    assert len(data["failures"]) == 3
+    assert len(data["failures"]) == 4
     assert all(f["claim"] and f["reasoning"] for f in data["failures"])
     assert {s["stage"] for s in data["validation_stages"]} == {
         "schema",
@@ -166,7 +166,7 @@ def test_tasks_expose_their_grounding_score(client, seeded_project):
 def test_project_list_reports_task_and_assumption_counts(client, seeded_project):
     projects = client.get("/projects").json()
     row = next(p for p in projects if p["id"] == seeded_project.id)
-    assert row["task_count"] == 3
+    assert row["task_count"] == 4
     assert row["assumption_count"] == len(PLANNING_FIELDS) - 1
 
 

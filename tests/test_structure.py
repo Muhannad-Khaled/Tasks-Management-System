@@ -43,8 +43,9 @@ def test_structure_reports_the_whole_tree(client, project):
     assert set(data["teams"]) == {"commercial", "technical", "operations"}
     totals = data["totals"]
     assert totals["requirements"] == 3
-    assert totals["user_stories"] == 3
-    assert totals["test_cases"] == 4
+    assert totals["user_stories"] == 5
+    assert totals["engineer_stories"] == 2
+    assert totals["test_cases"] == 6
     assert totals["open_questions"] > 0
 
 

@@ -13,7 +13,7 @@ from app.ingestion.parser import parse_document
 from app.main import app
 from app.models import Person, Project, ProjectRole, ProjectTask
 from app.schemas.enums import ProjectStatus
-from app.taskmanager.cards import _artifacts_by_requirement, _board_task
+from app.taskmanager.cards import _board_task, artifacts_for_tasks
 from tests.factories import StubLLM
 
 CORPUS = Path(__file__).parent.parent / "data" / "sample_sows"
@@ -89,7 +89,7 @@ def test_the_name_reaches_the_card_beside_its_role(client, project, db):
         f"/projects/{project.id}/roles/{role['role_id']}", json={"person_id": person["id"]}
     )
 
-    card = _board_task(db, task, _artifacts_by_requirement(db, project.id))
+    card = _board_task(db, task, artifacts_for_tasks(db, project.id))
 
     assert card.assignee_name == "Ahmed Fathy"
     assert "**Owner:** Ahmed Fathy (" in card.rendered_description()
@@ -101,7 +101,7 @@ def test_a_role_with_nobody_on_it_shows_only_the_role(client, project, db):
         .filter(ProjectTask.project_id == project.id, ProjectTask.assignee_role != "")
         .first()
     )
-    card = _board_task(db, task, _artifacts_by_requirement(db, project.id))
+    card = _board_task(db, task, artifacts_for_tasks(db, project.id))
 
     assert card.assignee_name == ""
     assert f"**Owner:** {task.assignee_role}" in card.rendered_description()
@@ -133,7 +133,7 @@ def test_a_task_can_name_somebody_other_than_the_role_holder(client, project, db
     task.assignee = "Sara Nabil"
     db.commit()
 
-    card = _board_task(db, task, _artifacts_by_requirement(db, project.id))
+    card = _board_task(db, task, artifacts_for_tasks(db, project.id))
 
     assert card.assignee_name == "Sara Nabil"
 

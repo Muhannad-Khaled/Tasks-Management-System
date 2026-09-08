@@ -14,6 +14,7 @@ its team is believed; one that does not gets this roster, recorded as ASSUMED.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.schemas.enums import Team
@@ -261,15 +262,50 @@ _CLIENT_SIDE = {
 }
 
 
-def is_delivery_role(actor: str) -> bool:
+def client_tokens(merchant_name: str) -> set[str]:
+    """Words that name the client on this particular engagement.
+
+    The generic list below cannot carry every industry, and hardcoding one
+    ("bank") would only move the problem: on an engagement where we are the
+    bank, the same word points the other way. The project already knows who it
+    is for, so the question is answered per project instead of per vocabulary.
+
+    Compound names are split, which is the whole reason this is not a plain
+    token match. "NileBank S.A.E." yields {nilebank} on its own, and the actor
+    the live run produced said "bank compliance officer" — no overlap, and the
+    client's own compliance officer was filed as one of ours. Initials and
+    other one- and two-letter fragments are dropped: "S.A.E." would otherwise
+    make every actor containing "a" look like the client's.
+    """
+    out: set[str] = set()
+    for token in _tokens(merchant_name):
+        if len(token) > 2:
+            out.add(token)
+        # NileBank -> nile, bank. The lowercased token has lost its case, so
+        # the split works off the original spelling.
+    for word in re.findall(r"[A-Z][a-z]+|[a-z]+", merchant_name):
+        if len(word) > 2:
+            out.add(word.lower())
+    return out
+
+
+def is_delivery_role(actor: str, client: str = "") -> bool:
     """Whether a described person is one of *ours* rather than the client's.
 
     Used to catch a user story written from the delivery team's point of view.
     "As a support agent, I want to deliver training" is a task in disguise: it
     describes work being done, not value someone receives, and a story like
     that cannot be judged done by anyone outside the project.
+
+    `client` is the merchant name from the project. Passing it is what lets a
+    role qualified by the client's own organisation — "bank compliance
+    officer", "NileBank operations manager" — be recognised as theirs.
     """
     wanted = _tokens(actor)
-    if not wanted or wanted & _CLIENT_SIDE:
+    if not wanted:
+        return False
+    if wanted & _CLIENT_SIDE:
+        return False
+    if client and wanted & client_tokens(client):
         return False
     return any(_score(role, wanted) >= _DISTINCTIVE_WEIGHT for role in TEAM_ROLES)

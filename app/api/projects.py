@@ -46,9 +46,9 @@ from app.models import (
 )
 from app.planning.milestones import calibrate, calibration_summary, check_milestones
 from app.planning.service import resolve_deadline, schedule_project
-from app.schemas.enums import ProjectStatus, ReviewStatus
+from app.schemas.enums import ProjectStatus, ReviewStatus, StoryKind
 from app.schemas.roles import TEAM_ROLES
-from app.taskmanager.cards import _artifacts_by_requirement, _board_task
+from app.taskmanager.cards import _board_task, artifacts_for_tasks
 from app.taskmanager.drift import open_drift
 from app.taskmanager.sync import PUSHABLE, refresh_status, sync_tasks
 from app.taskmanager.trello import TrelloAdapter, TrelloError
@@ -522,6 +522,48 @@ def list_questions(project_id: str, db: Session = Depends(get_db)) -> dict:
     }
 
 
+def _story_view(story: UserStory) -> dict:
+    """One story and everything hanging off it.
+
+    `measure` and its citation travel together deliberately. A threshold on
+    screen without the chunk it came from is indistinguishable from one the
+    model chose, and the reader has no way to tell which they are looking at.
+    """
+    return {
+        "story_id": story.story_key,
+        "kind": story.kind,
+        "actor": story.actor,
+        "sentence": story.sentence,
+        "source_status": story.source_status,
+        "technical_notes": story.technical_notes,
+        "technical_notes_chunk_keys": [
+            k for k in story.technical_notes_chunk_keys.split(",") if k
+        ],
+        "acceptance_criteria": [
+            {
+                "criterion_id": c.criterion_key,
+                "text": c.text,
+                "measure": c.measure,
+                "source_chunk_keys": [k for k in c.source_chunk_keys.split(",") if k],
+            }
+            for c in story.acceptance_criteria
+        ],
+        "test_cases": [
+            {
+                "case_id": case.case_key,
+                "title": case.title,
+                "preconditions": case.preconditions,
+                "action": case.action,
+                "expected_result": case.expected_result,
+                "kind": case.kind,
+                "rests_on_assumption": case.rests_on_assumption,
+                "assumed_fields": [f for f in case.assumed_fields.split(",") if f],
+            }
+            for case in story.test_cases
+        ],
+    }
+
+
 @router.get("/{project_id}/structure")
 def project_structure(project_id: str, db: Session = Depends(get_db)) -> dict:
     """The whole plan as one tree: project -> team -> what each team owns.
@@ -538,9 +580,16 @@ def project_structure(project_id: str, db: Session = Depends(get_db)) -> dict:
         db.query(ProjectRequirement).filter(ProjectRequirement.project_id == project_id).all()
     )
     stories = db.query(UserStory).filter(UserStory.project_id == project_id).all()
+    # Client stories describe the requirement; engineer stories describe one
+    # task. Merging them under the requirement is what put three tasks' worth
+    # of acceptance criteria on each of three cards.
     stories_by_requirement: dict[str, list[UserStory]] = {}
+    stories_by_task: dict[str, list[UserStory]] = {}
     for story in stories:
-        stories_by_requirement.setdefault(story.requirement_id, []).append(story)
+        if story.kind == str(StoryKind.ENGINEER) and story.task_id:
+            stories_by_task.setdefault(story.task_id, []).append(story)
+        elif story.requirement_id:
+            stories_by_requirement.setdefault(story.requirement_id, []).append(story)
 
     details = db.query(ProjectDetail).filter(ProjectDetail.project_id == project_id).all()
     roles = db.query(ProjectRole).filter(ProjectRole.project_id == project_id).all()
@@ -606,35 +655,14 @@ def project_structure(project_id: str, db: Session = Depends(get_db)) -> dict:
                             "due_date": t.due_date,
                             "validation_status": t.validation_status,
                             "delivered_by_another_team": t.team != r.team,
+                            "engineer_stories": [
+                                _story_view(story) for story in stories_by_task.get(t.id, [])
+                            ],
                         }
                         for t in tasks_by_requirement.get(r.id, [])
                     ],
                     "user_stories": [
-                        {
-                            "story_id": story.story_key,
-                            "sentence": story.sentence,
-                            "source_status": story.source_status,
-                            "acceptance_criteria": [
-                                {"criterion_id": c.criterion_key, "text": c.text}
-                                for c in story.acceptance_criteria
-                            ],
-                            "test_cases": [
-                                {
-                                    "case_id": case.case_key,
-                                    "title": case.title,
-                                    "preconditions": case.preconditions,
-                                    "action": case.action,
-                                    "expected_result": case.expected_result,
-                                    "kind": case.kind,
-                                    "rests_on_assumption": case.rests_on_assumption,
-                                    "assumed_fields": [
-                                        f for f in case.assumed_fields.split(",") if f
-                                    ],
-                                }
-                                for case in story.test_cases
-                            ],
-                        }
-                        for story in stories_by_requirement.get(r.id, [])
+                        _story_view(story) for story in stories_by_requirement.get(r.id, [])
                     ],
                 }
                 for r in requirements
@@ -661,6 +689,7 @@ def project_structure(project_id: str, db: Session = Depends(get_db)) -> dict:
             "requirements": len(requirements),
             "tasks": len(tasks),
             "user_stories": len(stories),
+            "engineer_stories": sum(1 for s in stories if s.kind == str(StoryKind.ENGINEER)),
             "test_cases": len(cases),
             "test_cases_resting_on_assumptions": sum(1 for c in cases if c.rests_on_assumption),
             "detail_items": len(details),
@@ -1101,7 +1130,7 @@ def approve_project(project_id: str, db: Session = Depends(get_db)) -> dict:
 
 def _sync(db: Session, project: Project, tasks: list[ProjectTask]):
     """Build the cards for these tasks and put them on the project's board."""
-    derived = _artifacts_by_requirement(db, project.id)
+    derived = artifacts_for_tasks(db, project.id)
     board_tasks = {t.id: _board_task(db, t, derived) for t in tasks}
     try:
         return sync_tasks(db, project, tasks, board_tasks, TrelloAdapter())

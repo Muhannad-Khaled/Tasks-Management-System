@@ -19,7 +19,7 @@ from app.ingestion.parser import parse_document
 from app.main import app
 from app.models import Person, PersonRole, Project, ProjectRole, ProjectTask
 from app.schemas.enums import ProjectStatus
-from app.taskmanager.cards import _artifacts_by_requirement, _board_task
+from app.taskmanager.cards import _board_task, artifacts_for_tasks
 from tests.factories import StubLLM
 
 CORPUS = Path(__file__).parent.parent / "data" / "sample_sows"
@@ -63,7 +63,7 @@ def _card_for(db, project: Project, role_title: str):
         .first()
     )
     assert task is not None, f"no task owned by {role_title}"
-    return _board_task(db, task, _artifacts_by_requirement(db, project.id))
+    return _board_task(db, task, artifacts_for_tasks(db, project.id))
 
 
 # --- the link -----------------------------------------------------------
@@ -177,7 +177,7 @@ def test_a_name_typed_onto_one_task_carries_no_account(db):
     task.assignee = "Karim Tarek"
     db.commit()
 
-    card = _board_task(db, task, _artifacts_by_requirement(db, project.id))
+    card = _board_task(db, task, artifacts_for_tasks(db, project.id))
 
     assert card.assignee_name == "Karim Tarek"
     assert card.assignee_member_id == "", "a typed name must not resolve to an account"

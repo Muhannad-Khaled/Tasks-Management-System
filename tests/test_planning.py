@@ -434,7 +434,7 @@ def test_tasks_attach_themselves_to_the_milestone_they_name(db):
     }
     assert set(rows) == {"Contract signed", "Go-live"}
     assert len(rows["Contract signed"].tasks) == 1
-    assert len(rows["Go-live"].tasks) == 2
+    assert len(rows["Go-live"].tasks) == 3
     assert not [w for w in warnings if "no task attached" in w]
 
 

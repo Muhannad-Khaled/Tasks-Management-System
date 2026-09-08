@@ -31,12 +31,13 @@ from app.models import (
     milestone_tasks,
 )
 from app.schemas.details import team_for
-from app.schemas.enums import SourceStatus, Team
+from app.schemas.enums import SourceStatus, StoryKind, Team
 from app.schemas.fields import FIELDS_BY_KEY
 from app.schemas.roles import (
     TEAM_ROLES,
     RoleSpec,
     is_delivery_role,
+    lead_role,
     match_role,
     roles_for_team,
 )
@@ -455,16 +456,115 @@ def persist_assumptions(db: Session, project: Project, assumptions: list[dict]) 
     return rows
 
 
+def _resolve_details(
+    names: list[str], details: dict[str, ProjectDetail]
+) -> tuple[list[ProjectDetail], list[str]]:
+    """Match cited detail names against what the SOW actually yielded.
+
+    Matching on the exact name is deliberate. The model is handed a closed list
+    and asked to copy from it, so a name that does not appear in that list was
+    not taken from the document — and the whole point of sourcing notes from
+    details is that nothing in them comes from the model's own idea of how a
+    system like this is usually built.
+    """
+    found, missing = [], []
+    for name in names:
+        detail = details.get(name.strip().casefold())
+        (found if detail is not None else missing).append(detail if detail is not None else name)
+    return found, missing
+
+
+def _write_criteria(
+    db: Session,
+    story: UserStory,
+    drafts,
+    details: dict[str, ProjectDetail],
+) -> list[str]:
+    """Write acceptance criteria, keeping only thresholds that trace somewhere.
+
+    A measure whose cited details do not exist is dropped rather than stored
+    and flagged. "The SOW did not set one" is a true and useful thing for a
+    criterion to say; a threshold nobody can trace is not, and an engineer who
+    reads '450 TPS' on a card will build to it without asking where it came
+    from.
+    """
+    warnings: list[str] = []
+    for draft in drafts:
+        measure = draft.measure.strip()
+        chunk_keys = ""
+        if measure:
+            sourced, missing = _resolve_details(draft.source_detail_names, details)
+            if sourced:
+                chunk_keys = ",".join(
+                    dict.fromkeys(
+                        key
+                        for detail in sourced
+                        for key in detail.source_chunk_keys.split(",")
+                        if key
+                    )
+                )
+            if missing:
+                warnings.append(
+                    f"criterion {draft.criterion_key} cites detail(s) the SOW did not "
+                    f"produce ({', '.join(missing)})"
+                )
+            if not chunk_keys:
+                warnings.append(
+                    f"criterion {draft.criterion_key} states {measure!r} with nothing "
+                    "in the SOW behind it, threshold dropped"
+                )
+                measure = ""
+        db.add(
+            AcceptanceCriterion(
+                user_story_id=story.id,
+                criterion_key=draft.criterion_key,
+                text=draft.text,
+                measure=measure,
+                source_chunk_keys=chunk_keys,
+            )
+        )
+    return warnings
+
+
+def _write_test_cases(
+    db: Session, project: Project, story: UserStory, drafts, assumed_fields: set[str]
+) -> list[str]:
+    warnings: list[str] = []
+    for case in drafts:
+        declared = [f for f in case.depends_on_fields if f in FIELDS_BY_KEY]
+        unknown = [f for f in case.depends_on_fields if f not in FIELDS_BY_KEY]
+        if unknown:
+            warnings.append(f"test case {case.case_key} names unknown field(s) {unknown}")
+        resting_on = sorted(set(declared) & assumed_fields)
+        db.add(
+            ProjectTestCase(
+                project_id=project.id,
+                user_story_id=story.id,
+                case_key=case.case_key,
+                title=case.title,
+                preconditions=case.preconditions,
+                action=case.action,
+                expected_result=case.expected_result,
+                kind=str(case.kind),
+                rests_on_assumption=bool(resting_on),
+                assumed_fields=",".join(resting_on),
+            )
+        )
+    return warnings
+
+
 def persist_artifacts(
     db: Session,
     project: Project,
     artifacts,
     requirements: dict[str, ProjectRequirement],
     assumed_fields: set[str],
+    tasks: dict[str, ProjectTask] | None = None,
+    details: list[ProjectDetail] | None = None,
 ) -> tuple[list[UserStory], list[str]]:
     """Write stories, criteria and cases, inheriting provenance downwards.
 
-    Two things are decided here rather than by the model:
+    Four things are decided here rather than by the model:
 
     Provenance. A story restates a requirement, so it is INFERRED at best and
     carries the requirement's citations. Asking the model to cite for it would
@@ -474,8 +574,24 @@ def persist_artifacts(
     fields a case used; which of those the SOW never settled is read from the
     gap audit. A case built on an invented number must be marked, or a QA
     engineer runs it, sees it pass, and reports the system correct.
+
+    An engineer story's actor. It is the role already assigned to the task, so
+    the model is never asked — a story cannot end up addressed to a role that
+    is not on this project.
+
+    What technical notes may say. They are assembled only from details the
+    extraction produced, which carry their own chunk keys. A note citing
+    nothing real is dropped whole: the SOW being silent about the stack is a
+    fact, and filling that silence with a plausible stack is the failure this
+    platform exists to catch.
+
+    The residual limit, stated plainly: a note that cites a real detail can
+    still add prose around it, and nothing here reads the prose. The citation
+    proves the subject was in the SOW, not every word written about it.
     """
     warnings: list[str] = []
+    by_name = {d.name.strip().casefold(): d for d in (details or [])}
+    tasks = tasks or {}
     # A bulk delete does not run the ORM's delete-orphan cascade, so the
     # criteria of the stories being replaced would survive them and the foreign
     # key would block the delete. Clear children first, deepest last-referenced
@@ -520,7 +636,8 @@ def persist_artifacts(
                 else str(SourceStatus.INFERRED)
             ),
             source_chunk_keys=requirement.source_chunk_keys,
-            actor_is_delivery_side=is_delivery_role(draft.actor),
+            kind=str(StoryKind.CLIENT),
+            actor_is_delivery_side=is_delivery_role(draft.actor, project.merchant_name or ""),
         )
         if story.actor_is_delivery_side:
             warnings.append(
@@ -530,35 +647,62 @@ def persist_artifacts(
         db.add(story)
         db.flush()
 
-        for criterion in draft.acceptance_criteria:
-            db.add(
-                AcceptanceCriterion(
-                    user_story_id=story.id,
-                    criterion_key=criterion.criterion_key,
-                    text=criterion.text,
-                )
-            )
+        warnings += _write_criteria(db, story, draft.acceptance_criteria, by_name)
+        warnings += _write_test_cases(db, project, story, draft.test_cases, assumed_fields)
+        stories.append(story)
 
-        for case in draft.test_cases:
-            declared = [f for f in case.depends_on_fields if f in FIELDS_BY_KEY]
-            unknown = [f for f in case.depends_on_fields if f not in FIELDS_BY_KEY]
-            if unknown:
-                warnings.append(f"test case {case.case_key} names unknown field(s) {unknown}")
-            resting_on = sorted(set(declared) & assumed_fields)
-            db.add(
-                ProjectTestCase(
-                    project_id=project.id,
-                    user_story_id=story.id,
-                    case_key=case.case_key,
-                    title=case.title,
-                    preconditions=case.preconditions,
-                    action=case.action,
-                    expected_result=case.expected_result,
-                    kind=str(case.kind),
-                    rests_on_assumption=bool(resting_on),
-                    assumed_fields=",".join(resting_on),
+    for draft in getattr(artifacts, "engineer_stories", []):
+        task = tasks.get(draft.task_id)
+        if task is None:
+            warnings.append(
+                f"engineer story {draft.story_key} names unknown task "
+                f"{draft.task_id!r}, dropped"
+            )
+            continue
+
+        sourced, missing = _resolve_details(draft.source_detail_names, by_name)
+        if missing:
+            warnings.append(
+                f"engineer story {draft.story_key} cites detail(s) the SOW did not "
+                f"produce ({', '.join(missing)})"
+            )
+        notes = draft.technical_notes.strip()
+        if notes and not sourced:
+            warnings.append(
+                f"engineer story {draft.story_key} has technical notes resting on no "
+                "detail the SOW stated, notes dropped"
+            )
+            notes = ""
+
+        story = UserStory(
+            project_id=project.id,
+            requirement_id=task.requirement_id,
+            task_id=task.id,
+            kind=str(StoryKind.ENGINEER),
+            story_key=draft.story_key,
+            team=task.team,
+            # Never asked for: the plan already decided who owns this task.
+            actor=task.assignee_role or lead_role(task.team).title,
+            capability=draft.capability,
+            benefit=draft.benefit,
+            technical_notes=notes,
+            technical_notes_chunk_keys=",".join(
+                dict.fromkeys(
+                    key for d in sourced for key in d.source_chunk_keys.split(",") if key
                 )
             )
+            if notes
+            else "",
+            source_status=str(SourceStatus.INFERRED),
+            source_chunk_keys=task.source_chunk_keys,
+            # The defining shape of this kind, not a fault to be reported.
+            actor_is_delivery_side=True,
+        )
+        db.add(story)
+        db.flush()
+
+        warnings += _write_criteria(db, story, draft.acceptance_criteria, by_name)
+        warnings += _write_test_cases(db, project, story, draft.test_cases, assumed_fields)
         stories.append(story)
 
     db.flush()

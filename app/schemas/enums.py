@@ -15,6 +15,18 @@ class FieldScope(StrEnum):
     PROJECT = "project"
 
 
+class StoryKind(StrEnum):
+    """Whose point of view a user story is written from.
+
+    CLIENT stories say what someone outside the project gets, and an actor
+    from the delivery team disqualifies them. ENGINEER stories say how one
+    technical task will be built, and a delivery role is the whole point.
+    """
+
+    CLIENT = "client"
+    ENGINEER = "engineer"
+
+
 class SourceStatus(StrEnum):
     """Provenance of a piece of information (brief section 2)."""
 

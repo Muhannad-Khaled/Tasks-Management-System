@@ -209,6 +209,11 @@ class ProjectTask(Base):
         foreign_keys="TaskDependency.task_id",
         cascade="all, delete-orphan",
     )
+    # Engineer stories only, and normally one. Cascaded because a story
+    # describing how to build this task has no meaning once it is gone.
+    stories: Mapped[list[UserStory]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
 
     @property
     def depends_on(self) -> list[ProjectTask]:
@@ -447,6 +452,13 @@ class UserStory(Base):
 
     Never EXPLICIT: a story is a restatement, so its provenance is inherited
     from the requirement it came from rather than claimed on its own.
+
+    There are two kinds, and they answer different questions. A CLIENT story
+    says what the merchant or cardholder gets, hangs off a requirement, and its
+    actor must be outside the project. An ENGINEER story says how one technical
+    task will be built, hangs off that task, and its actor is the delivery role
+    already assigned to it — so what disqualifies the first kind is exactly
+    what defines the second.
     """
 
     __tablename__ = "user_stories"
@@ -456,20 +468,35 @@ class UserStory(Base):
     requirement_id: Mapped[str | None] = mapped_column(
         ForeignKey("project_requirements.id"), nullable=True
     )
+    # Set on engineer stories only. Without it every task sharing a requirement
+    # inherited the same criteria, so a card for writing a design document
+    # carried the acceptance criteria of the accrual engine beside it.
+    task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_tasks.id"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), default="client", index=True)
     story_key: Mapped[str] = mapped_column(String(32))  # US-001
     team: Mapped[str] = mapped_column(String(32), index=True)
     actor: Mapped[str] = mapped_column(String(128))
     capability: Mapped[str] = mapped_column(Text)
     benefit: Mapped[str] = mapped_column(Text, default="")
+    # What the engineer needs to know that is not in the story: the interfaces,
+    # the auth mechanism, the environments. Composed from the project's own
+    # extracted details, never from the model's knowledge of how such things
+    # are usually built, and empty when the SOW named none.
+    technical_notes: Mapped[str] = mapped_column(Text, default="")
+    technical_notes_chunk_keys: Mapped[str] = mapped_column(Text, default="")
     source_status: Mapped[str] = mapped_column(String(16), default="inferred")
     source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
-    # True when the actor is one of our own delivery roles. Such a story is a
-    # task in disguise — it describes work rather than value, so no one outside
-    # the project can say whether it is done.
+    # True when the actor is one of our own delivery roles. On a client story
+    # that is a task in disguise — it describes work rather than value, so no
+    # one outside the project can say whether it is done. On an engineer story
+    # it is the intended shape and nothing is wrong.
     actor_is_delivery_side: Mapped[bool] = mapped_column(Boolean, default=False)
 
     project: Mapped[Project] = relationship(back_populates="user_stories")
     requirement: Mapped[ProjectRequirement | None] = relationship()
+    task: Mapped[ProjectTask | None] = relationship(back_populates="stories")
     acceptance_criteria: Mapped[list[AcceptanceCriterion]] = relationship(
         back_populates="user_story", cascade="all, delete-orphan"
     )
@@ -479,18 +506,44 @@ class UserStory(Base):
 
     @property
     def sentence(self) -> str:
-        return f"As a {self.actor}, I want {self.capability} so that {self.benefit}"
+        """The story as one line, which is how it reaches a Trello card.
+
+        The infinitive is supplied here rather than asked for. Models return
+        the capability as a bare verb phrase — "establish signed agreements",
+        "verify multi-AZ failover" — and every story on the last live run read
+        "I want establish". Requiring the model to include "to" would put the
+        grammar of every card at the mercy of one instruction it can silently
+        ignore; adding it in code cannot fail.
+        """
+        capability = self.capability.strip()
+        if not capability.lower().startswith("to "):
+            capability = f"to {capability}"
+        return f"As a {self.actor}, I want {capability} so that {self.benefit}"
 
 
 class AcceptanceCriterion(Base):
+    """One condition that decides whether a story is finished.
+
+    `measure` exists because "the API responds quickly" cannot be accepted or
+    refused by anybody. When the SOW commits to a threshold the criterion
+    carries it — and then it must also carry where it came from, for the same
+    reason a test case must: a number nobody can trace gets signed off as fact.
+    """
+
     __tablename__ = "acceptance_criteria"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     user_story_id: Mapped[str] = mapped_column(ForeignKey("user_stories.id"))
     criterion_key: Mapped[str] = mapped_column(String(32))  # AC-001
     text: Mapped[str] = mapped_column(Text)
+    # The threshold, when the SOW set one: "p95 <= 400ms", "450 TPS".
+    measure: Mapped[str] = mapped_column(Text, default="")
+    source_chunk_keys: Mapped[str] = mapped_column(Text, default="")
 
     user_story: Mapped[UserStory] = relationship(back_populates="acceptance_criteria")
+
+    def rendered(self) -> str:
+        return f"{self.text} — {self.measure}" if self.measure else self.text
 
 
 class ProjectTestCase(Base):

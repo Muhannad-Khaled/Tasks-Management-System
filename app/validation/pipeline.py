@@ -33,7 +33,7 @@ from app.models import (
 )
 from app.planning.dependencies import build_dependency_graph
 from app.planning.milestones import check_milestones, milestone_summary
-from app.schemas.enums import SourceStatus, Team
+from app.schemas.enums import SourceStatus, StoryKind, Team
 
 logger = logging.getLogger(__name__)
 
@@ -315,9 +315,16 @@ def validate_derived_artifacts(db: Session, project_id: str) -> StageResult:
         )
 
     problems: list[str] = []
-    orphans = [s.story_key for s in stories if s.requirement_id is None]
+    client_stories = [s for s in stories if s.kind != str(StoryKind.ENGINEER)]
+    engineer_stories = [s for s in stories if s.kind == str(StoryKind.ENGINEER)]
+
+    orphans = [s.story_key for s in client_stories if s.requirement_id is None]
     if orphans:
         problems.append(f"{len(orphans)} story(s) not linked to a requirement")
+
+    untasked = [s.story_key for s in engineer_stories if s.task_id is None]
+    if untasked:
+        problems.append(f"{len(untasked)} engineer story(s) not linked to a task")
 
     storyless = [c.case_key for c in cases if c.user_story_id is None]
     if storyless:
@@ -329,11 +336,37 @@ def validate_derived_artifacts(db: Session, project_id: str) -> StageResult:
 
     # "As a support agent, I want to deliver training" is a task wearing a user
     # story's grammar. It cannot be accepted by anyone outside the project.
-    inward = [s.story_key for s in stories if s.actor_is_delivery_side]
+    # Only client stories are judged by this: an engineer story is addressed to
+    # the delivery role that owns the task, which is the point of it.
+    inward = [s.story_key for s in client_stories if s.actor_is_delivery_side]
     if inward:
         problems.append(
             f"{len(inward)} story(s) written from the delivery team's point of view "
             f"rather than a user's: {inward[:3]}"
+        )
+
+    # The same standard test cases are held to. A threshold on a card is read
+    # as something the client agreed to, so one that cites nothing is worse
+    # than no threshold at all.
+    uncited = [
+        criterion.criterion_key
+        for story in stories
+        for criterion in story.acceptance_criteria
+        if criterion.measure and not criterion.source_chunk_keys
+    ]
+    if uncited:
+        problems.append(
+            f"{len(uncited)} acceptance criterion(s) set a threshold with nothing in "
+            f"the SOW behind it: {uncited[:3]}"
+        )
+
+    unsourced_notes = [
+        s.story_key for s in stories if s.technical_notes and not s.technical_notes_chunk_keys
+    ]
+    if unsourced_notes:
+        problems.append(
+            f"{len(unsourced_notes)} story(s) carry technical notes citing no detail "
+            f"the SOW stated: {unsourced_notes[:3]}"
         )
 
     # A number in an expected result either traces to the SOW or names the
@@ -352,7 +385,32 @@ def validate_derived_artifacts(db: Session, project_id: str) -> StageResult:
             f"nor a named assumption: {unexplained[:3]}"
         )
 
+    # A criterion stating no number is checked by nothing. The grounding engine
+    # runs before these exist and reads task descriptions, not criteria, so
+    # "the dynamic campaign engine evaluates AI segmentation models" is stored
+    # and shipped to a board without ever being compared against the SOW — and
+    # a campaign engine is precisely what grounding rejected on a live run when
+    # the same words appeared in a task.
+    #
+    # It cannot be settled here without a model call. What can be done is to
+    # stop the silence reading as a pass: an engineer story whose task the
+    # grounding engine rejected has criteria derived from rejected wording.
+    ungrounded = [
+        story.story_key
+        for story in engineer_stories
+        if story.task is not None
+        and story.task.validation_status in {"reject", "unsupported"}
+        and story.acceptance_criteria
+    ]
+    if ungrounded:
+        problems.append(
+            f"{len(ungrounded)} story(s) carry acceptance criteria derived from a task "
+            f"the grounding engine rejected: {ungrounded[:3]}"
+        )
+
     resting = [c.case_key for c in cases if c.rests_on_assumption]
+    measured = [c for s in stories for c in s.acceptance_criteria if c.measure]
+    unmeasured = sum(len(s.acceptance_criteria) for s in stories) - len(measured)
     return StageResult(
         stage="derived_artifacts",
         passed=not problems,
@@ -361,7 +419,14 @@ def validate_derived_artifacts(db: Session, project_id: str) -> StageResult:
             if problems
             else (
                 f"{len(stories)} story(s), {len(cases)} test case(s); "
-                f"{len(resting)} rest on an assumed value"
+                f"{len(resting)} rest on an assumed value. "
+                # Said the way the gap audit says how far it looked. A pass
+                # here covers thresholds and links; it says nothing about
+                # whether the wording of a criterion is true, and a reader
+                # who is not told that will assume it does.
+                f"{len(measured)} criterion(s) carry a threshold checked against the "
+                f"SOW; the wording of the other {unmeasured} was not verified against "
+                "the document."
             )
         ),
     )

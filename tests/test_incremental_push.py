@@ -140,7 +140,7 @@ def push(client, project, task):
 
 
 def test_two_separate_pushes_land_on_one_board(client, project, board):
-    first, second, _ = tasks_of(client, project)
+    first, second, *_ = tasks_of(client, project)
     for task in (first, second):
         approve(client, project, task)
         assert push(client, project, task).status_code == 200
@@ -241,9 +241,9 @@ def test_push_remaining_sends_only_what_is_missing(client, project, board):
     client.post(f"/projects/{project.id}/approve")
     result = client.post(f"/projects/{project.id}/push").json()
 
-    assert result["cards_created"] == 2  # the third was already there
+    assert result["cards_created"] == 3  # the first was already there
     assert result["cards_updated"] == 0
-    assert len(board.cards) == 3
+    assert len(board.cards) == 4
     assert board.boards_created == 1
 
 
@@ -375,7 +375,7 @@ def test_a_deleted_card_is_reported_and_not_recreated(client, project, board):
 
 def test_a_difference_is_reported_once_not_every_push(client, project, board):
     """An alert that repeats every cycle is an alert people mute."""
-    first, second, _ = tasks_of(client, project)
+    first, second, *_ = tasks_of(client, project)
     for task in (first, second):
         approve(client, project, task)
     push(client, project, first)

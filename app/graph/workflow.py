@@ -47,13 +47,19 @@ from app.ingestion.parser import parse_document
 from app.ingestion.validation import ParsingStatus, validate_parsed_document
 from app.llm.client import GeminiClient, LLMError, build_chunked_text
 from app.llm.prompts import GAP_DETECTION, SOW_EXTRACTION, TECHNICAL_ARTIFACTS
-from app.models import Assumption, Project, ProjectRequirement, ProjectTask
+from app.models import (
+    Assumption,
+    Project,
+    ProjectDetail,
+    ProjectRequirement,
+    ProjectTask,
+)
 from app.notifications.discord import notify_review_ready
 from app.planning.service import resolve_deadline, schedule_project
 from app.rag.index import index_document, search
 from app.schemas.artifacts import TechnicalArtifacts
 from app.schemas.details import render_category_guide
-from app.schemas.enums import ProjectStatus, SourceStatus
+from app.schemas.enums import ProjectStatus, SourceStatus, Team
 from app.schemas.fields import PLANNING_FIELDS
 from app.schemas.gaps import GapReport
 from app.schemas.roles import render_role_guide
@@ -129,10 +135,28 @@ def _node_session(db: Session | None) -> Iterator[Session | None]:
 
 
 def make_extract_node(client: GeminiClient, db: Session | None):
-    def _node_extract(state: SOWState) -> SOWState:
+    """Read the document into a structured plan.
+
+    An extraction carrying no tasks is treated as a failure rather than as an
+    empty answer, and this is the whole reason the node is not three lines.
+
+    `requirements` and `tasks` both default to an empty list, so a response
+    that simply omits them validates cleanly. A live run did exactly that: the
+    model returned project_info, an 11-role roster, 11 milestones and 26
+    details, silently skipped the two sections in between, and the pipeline
+    carried on and reported "Created a new project with 0 tasks" in a green
+    success box. Everything downstream was correct about nothing.
+
+    A document that parsed into chunks always has work in it, so an empty task
+    list is a defect in the answer, not a fact about the SOW. It is retried
+    once, because the same prompt on the same document produced twelve tasks
+    the day before and skipping sections is a lapse rather than a verdict.
+    """
+
+    def _extract(state: SOWState) -> StructuredSOW:
         doc = state["parsed_doc"]
         with _node_session(db) as session:
-            extraction = client.generate_structured(
+            return client.generate_structured(
                 prompt=SOW_EXTRACTION,
                 schema=StructuredSOW,
                 db=session,
@@ -143,7 +167,36 @@ def make_extract_node(client: GeminiClient, db: Session | None):
                 role_guide=render_role_guide(),
                 category_guide=render_category_guide(),
             )
-        return {"extraction": extraction}
+
+    def _node_extract(state: SOWState) -> SOWState:
+        extraction = _extract(state)
+        if extraction.tasks:
+            return {"extraction": extraction}
+
+        missing = ", ".join(
+            name for name in ("requirements", "tasks") if not getattr(extraction, name)
+        )
+        warnings = [
+            f"extraction came back with no {missing}; asking once more before giving up"
+        ]
+        logger.warning("Extraction returned no tasks; retrying once")
+        # A retry costs one of twenty daily calls. An empty project costs the
+        # whole run and looks like a successful one.
+        retried = _extract(state)
+        if retried.tasks:
+            return {"extraction": retried, "warnings": warnings}
+
+        return {
+            "extraction": retried,
+            "warnings": warnings,
+            "error": (
+                f"The model read the document but returned no {missing}. This is a "
+                "fault in the extraction, not something the SOW is missing — the "
+                "document parsed into "
+                f"{sum(1 for _ in state['parsed_doc'].iter_chunks())} chunks. "
+                "Nothing was planned from it. Upload it again."
+            ),
+        }
 
     return _node_extract
 
@@ -306,6 +359,35 @@ def _render_requirements(requirements: list[ProjectRequirement]) -> str:
     )
 
 
+def _render_technical_tasks(tasks: list[ProjectTask]) -> str:
+    """The tasks an engineer story may be written for, with their owners.
+
+    The role is shown but not asked for back: it tells the model who the story
+    is addressed to so the capability is written at the right level, while the
+    actor itself is taken from the task in code.
+    """
+    return "\n".join(
+        f"[{t.id}] {t.title} — owned by {t.assignee_role or 'the technical lead'}"
+        + (f"\n    {t.description}" if t.description else "")
+        for t in tasks
+    )
+
+
+def _render_details(details: list[ProjectDetail]) -> str:
+    """The closed list technical notes and thresholds may be built from.
+
+    Everything an engineer story is allowed to say about interfaces, protocols
+    and environments has to come from here. Without it the model writes the
+    stack it expects to see — plausible, specific, and belonging to no document
+    anyone signed.
+    """
+    if not details:
+        return "(the SOW stated no technical details)"
+    return "\n".join(
+        f"- {d.name}" + (f": {d.description}" if d.description else "") for d in details
+    )
+
+
 def _render_working_values(findings: dict) -> str:
     """The values the plan runs on, each marked with where it came from.
 
@@ -343,6 +425,21 @@ def make_artifacts_node(client: GeminiClient, db: Session):
         if not requirements or project is None:
             return {"warnings": ["no requirements to derive user stories from"]}
 
+        technical_tasks = (
+            db.query(ProjectTask)
+            .filter(ProjectTask.project_id == project_id, ProjectTask.team == str(Team.TECHNICAL))
+            .order_by(ProjectTask.title)
+            .all()
+        )
+        technical_details = (
+            db.query(ProjectDetail)
+            .filter(
+                ProjectDetail.project_id == project_id,
+                ProjectDetail.team == str(Team.TECHNICAL),
+            )
+            .all()
+        )
+
         findings = state.get("gap_findings", {})
         assumed_fields = {
             key
@@ -358,6 +455,8 @@ def make_artifacts_node(client: GeminiClient, db: Session):
                 project_id=project_id,
                 graph_node="technical_artifacts",
                 requirements=_render_requirements(requirements),
+                technical_tasks=_render_technical_tasks(technical_tasks),
+                project_details=_render_details(technical_details),
                 working_values=_render_working_values(findings),
             )
         except LLMError as exc:
@@ -370,7 +469,14 @@ def make_artifacts_node(client: GeminiClient, db: Session):
             artifacts,
             {r.requirement_key: r for r in requirements},
             assumed_fields,
+            tasks={t.id: t for t in technical_tasks},
+            details=technical_details,
         )
+        if technical_tasks and not getattr(artifacts, "engineer_stories", []):
+            warnings.append(
+                f"{len(technical_tasks)} technical task(s) got no engineer story, so "
+                "their cards carry no build detail"
+            )
         db.commit()
 
         stage = validate_derived_artifacts(db, project_id)

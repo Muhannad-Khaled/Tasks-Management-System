@@ -39,7 +39,7 @@ def test_pipeline_produces_tasks_linked_to_real_evidence(db):
     )
 
     assert state["parsing_status"] == "valid"
-    assert state["task_count"] == 3
+    assert state["task_count"] == 4
 
     tasks = db.query(ProjectTask).filter(ProjectTask.project_id == project.id).all()
     assert {t.team for t in tasks} == {"commercial", "technical", "operations"}

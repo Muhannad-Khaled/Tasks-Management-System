@@ -138,8 +138,11 @@ def test_the_story_reads_as_a_sentence(db, extracted):
     db.commit()
 
     story = db.query(UserStory).filter(UserStory.story_key == "US-002").one()
+    # The infinitive is supplied in code. Models return a bare verb phrase, so
+    # this assertion used to encode "I want earn points" — the exact wording a
+    # live run then printed onto every Trello card.
     assert story.sentence == (
-        "As a customer, I want earn points on a purchase so that I am rewarded for shopping"
+        "As a customer, I want to earn points on a purchase so that I am rewarded for shopping"
     )
 
 
@@ -202,8 +205,10 @@ def test_the_pipeline_produces_stories_and_cases_end_to_end(db):
         db, project.id, str(sow), "SOW-001", client=StubLLM(citations=citations)
     )
 
-    assert state["story_count"] == 3
-    assert state["test_case_count"] == 4
+    # Three client stories, one per requirement, plus one engineer story for
+    # each of the two technical tasks.
+    assert state["story_count"] == 5
+    assert state["test_case_count"] == 6
     # The gap report leaves earn_rate assumed, so the accrual case must arrive
     # already carrying that warning.
     case = db.query(ProjectTestCase).filter(ProjectTestCase.case_key == "TC-002").one()

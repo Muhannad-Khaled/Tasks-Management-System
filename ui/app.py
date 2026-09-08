@@ -751,6 +751,60 @@ def render_grounding(project_id: str) -> None:
         st.success("Every claim is supported by the SOW.")
 
 
+def render_story(story: dict) -> None:
+    """One story, its criteria and its tests.
+
+    Two kinds share this. A client story says what a merchant or cardholder
+    gets; an engineer story says how the assigned role will build one task, and
+    is marked so nobody reads a delivery-side actor as the first kind having
+    gone wrong.
+
+    A criterion's threshold is never shown without its citation. On screen the
+    two are the difference between a number the client agreed to and a number
+    that arrived from nowhere, and they look identical otherwise.
+    """
+    engineer = story.get("kind") == "engineer"
+    label = f"🛠️ *{story['story_id']}*" if engineer else f"> *{story['story_id']}*"
+    st.markdown(f"{label} — {story['sentence']}")
+
+    if story.get("technical_notes"):
+        cited = story.get("technical_notes_chunk_keys") or []
+        with st.expander(f"📐 Technical notes — from {len(cited)} cited section(s)"):
+            st.markdown(story["technical_notes"])
+            if cited:
+                st.caption("From: " + ", ".join(cited))
+    elif engineer:
+        st.caption(
+            "📐 The SOW specifies no interfaces, protocols or environments for "
+            "this work. Nothing was assumed in their place."
+        )
+
+    for criterion in story["acceptance_criteria"]:
+        line = f"&nbsp;&nbsp;&nbsp;☐ {criterion['text']}"
+        if criterion.get("measure"):
+            line += f" — **{criterion['measure']}**"
+        st.markdown(line, unsafe_allow_html=True)
+        if criterion.get("measure") and criterion.get("source_chunk_keys"):
+            st.caption("&nbsp;&nbsp;&nbsp;&nbsp;↳ " + ", ".join(criterion["source_chunk_keys"]))
+
+    for case in story["test_cases"]:
+        header = f"🧪 {case['case_id']} — {case['title']}"
+        if case["rests_on_assumption"]:
+            header += "  ·  ⚠️ rests on an assumption"
+        with st.expander(header):
+            if case["rests_on_assumption"]:
+                st.warning(
+                    "The expected result below depends on "
+                    f"{', '.join(case['assumed_fields'])}, which the SOW does not "
+                    "state. Confirm the value before treating a pass as acceptance."
+                )
+            if case["preconditions"]:
+                st.markdown(f"**Given** {case['preconditions']}")
+            st.markdown(f"**When** {case['action']}")
+            st.markdown(f"**Then** {case['expected_result']}")
+            st.caption(case["kind"].replace("_", " "))
+
+
 def render_structure(project_id: str) -> None:
     """The plan as a tree: project, then what each team owns and must prove."""
     structure = api("GET", f"/projects/{project_id}/structure")
@@ -842,34 +896,15 @@ def render_structure(project_id: str) -> None:
                             f"**{task['team'].title()}** list on the board — not under "
                             f"{team.title()}."
                         )
+                    for story in task.get("engineer_stories", []):
+                        render_story(story)
                 if not requirement["tasks"]:
                     st.caption("⚠️ No task delivers this requirement.")
 
                 if not requirement["user_stories"]:
                     st.caption("No user stories derived for this requirement.")
                 for story in requirement["user_stories"]:
-                    st.markdown(f"> *{story['story_id']}* — {story['sentence']}")
-                    for criterion in story["acceptance_criteria"]:
-                        st.markdown(
-                            f"&nbsp;&nbsp;&nbsp;☐ {criterion['text']}", unsafe_allow_html=True
-                        )
-                    for case in story["test_cases"]:
-                        header = f"🧪 {case['case_id']} — {case['title']}"
-                        if case["rests_on_assumption"]:
-                            header += "  ·  ⚠️ rests on an assumption"
-                        with st.expander(header):
-                            if case["rests_on_assumption"]:
-                                st.warning(
-                                    "The expected result below depends on "
-                                    f"{', '.join(case['assumed_fields'])}, which the SOW "
-                                    "does not state. Confirm the value before treating a "
-                                    "pass as acceptance."
-                                )
-                            if case["preconditions"]:
-                                st.markdown(f"**Given** {case['preconditions']}")
-                            st.markdown(f"**When** {case['action']}")
-                            st.markdown(f"**Then** {case['expected_result']}")
-                            st.caption(case["kind"].replace("_", " "))
+                    render_story(story)
 
 
 def render_audit_coverage(coverage: dict | None) -> None:

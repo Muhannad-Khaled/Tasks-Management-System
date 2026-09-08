@@ -31,7 +31,12 @@ SUPPLIED = {
     CLAIM_EXTRACTION: {"tasks"},
     CLAIM_VERIFICATION: {"evidence", "claims"},
     TASK_REGENERATION: {"title", "description", "team", "reason", "failed_claims", "evidence"},
-    TECHNICAL_ARTIFACTS: {"requirements", "working_values"},
+    TECHNICAL_ARTIFACTS: {
+        "requirements",
+        "technical_tasks",
+        "project_details",
+        "working_values",
+    },
 }
 
 

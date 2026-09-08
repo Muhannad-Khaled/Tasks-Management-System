@@ -20,7 +20,7 @@ from app.models import Project
 from app.notifications.discord import notify_board_drift
 from app.taskmanager import drift
 from app.taskmanager.base import TaskManagerInterface
-from app.taskmanager.cards import _artifacts_by_requirement, _board_task
+from app.taskmanager.cards import _board_task, artifacts_for_tasks
 from app.taskmanager.trello import TrelloAdapter, TrelloError
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def check_project(
     if not tasks:
         return []
 
-    derived = _artifacts_by_requirement(db, project.id)
+    derived = artifacts_for_tasks(db, project.id)
     board_tasks = {t.id: _board_task(db, t, derived) for t in tasks}
     snapshots = adapter.card_snapshots(project.board_id)
     # After the read, not before: a failed call must not leave behind a time

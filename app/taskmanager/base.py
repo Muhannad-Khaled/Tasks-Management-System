@@ -94,6 +94,13 @@ class BoardTask:
     # Planning fields the task's tests rely on that the SOW never settled.
     assumed_test_fields: list[str] = field(default_factory=list)
     test_cases: list[BoardCase] = field(default_factory=list)
+    # How the assigned engineer is meant to approach this task, and the
+    # interfaces and constraints it has to respect. Both come from the
+    # project's own extracted details, so an empty `technical_notes` on a
+    # technical card is a fact about the SOW rather than a gap in the output.
+    story_sentence: str = ""
+    technical_notes: str = ""
+    expects_technical_notes: bool = False
 
     def labels(self) -> list[str]:
         """Board labels: where the task came from, and whether it held up.
@@ -150,6 +157,24 @@ class BoardTask:
         needed saying, which is the only way warnings keep working.
         """
         parts = [self.description.strip() or "(no description)"]
+
+        # Between the description and the metadata: this is what the person
+        # holding the card actually has to do, so it reads before the
+        # bookkeeping and after the summary.
+        if self.story_sentence:
+            parts.append(f"**Approach**\n\n{self.story_sentence}")
+        if self.technical_notes:
+            parts.append(f"**Technical notes**\n\n{self.technical_notes}")
+        elif self.expects_technical_notes:
+            # Named rather than left blank. An engineer who sees nothing here
+            # assumes the constraints are recorded somewhere else and goes
+            # looking; one who reads this knows there is nothing to find and
+            # that whatever they choose is their own decision to defend.
+            parts.append(
+                "**Technical notes**\n\nThe SOW does not specify the interfaces, "
+                "protocols or environments for this work. Nothing has been "
+                "assumed on your behalf — agree them before building."
+            )
 
         facts = []
         if self.assignee_role:
