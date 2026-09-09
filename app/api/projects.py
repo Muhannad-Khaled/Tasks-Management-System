@@ -72,6 +72,9 @@ class ProjectSummary(BaseModel):
     assumption_count: int
     board_url: str = ""
     board_checked_at: datetime | None = None
+    # Two runs of the same SOW agree on name, task count and eventually status
+    # too, which left the picker showing two rows nothing could tell apart.
+    created_at: datetime | None = None
 
 
 class DependencyView(BaseModel):
@@ -183,6 +186,7 @@ def list_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
             assumption_count=db.query(Assumption).filter(Assumption.project_id == p.id).count(),
             board_url=p.board_url,
             board_checked_at=p.board_checked_at,
+            created_at=p.created_at,
         )
         for p in projects
     ]

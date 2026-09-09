@@ -135,7 +135,11 @@ def render_upload() -> None:
                     f"Created a new project with {result['task_count']} tasks "
                     f"(parsing status: {result['parsing_status']})."
                 )
+                # Both keys, or the picker's stored value wins on the next run
+                # and drags the page back to whatever was selected before the
+                # upload — which is how a fresh project could vanish on refresh.
                 st.session_state["project_id"] = result["project_id"]
+                st.session_state["project_picker"] = result["project_id"]
             for warning in result.get("warnings", []):
                 st.warning(warning)
 
@@ -637,7 +641,18 @@ def render_review_controls(project_id: str, task: dict) -> None:
             st.warning(warning)
 
     approve_col, push_col, reject_col = st.columns(3)
-    if approve_col.button("Approve", key=f"ok-{task['id']}") and api(
+    # Settled means the PM has already ruled on this task. Leaving the button
+    # live afterwards made an approval look like it had not registered: the
+    # status line said "approved" while the button still invited a click, and
+    # the push button beside it greyed itself out for exactly the same state.
+    settled = task["review_status"] in {"approved", "edited"}
+    if settled:
+        approve_col.button(
+            "✅ Approved" if task["review_status"] == "approved" else "✅ Edited",
+            key=f"ok-{task['id']}",
+            disabled=True,
+        )
+    elif approve_col.button("Approve", key=f"ok-{task['id']}") and api(
         "POST", f"/projects/{project_id}/tasks/{task['id']}/approve"
     ):
         st.rerun()
@@ -985,6 +1000,20 @@ def render_questions(project_id: str) -> None:
                 )
 
 
+def _short_when(value: str | None) -> str:
+    """Timestamp for the project picker.
+
+    Name, task count and status all converge between two runs of the same SOW,
+    so the only field that reliably separates them is when they were made.
+    """
+    if not value:
+        return "??"
+    try:
+        return datetime.fromisoformat(value).strftime("%d %b %H:%M")
+    except ValueError:
+        return str(value)[:16]
+
+
 def render_project(project_id: str, projects: list[dict]) -> None:
     project = next((p for p in projects if p["id"] == project_id), None)
     if not project:
@@ -1058,7 +1087,7 @@ def render_project(project_id: str, projects: list[dict]) -> None:
                     else ""
                 )
                 with st.expander(
-                    f"{icon} {task['title']}  ·  {task['priority'].upper()}{grounding}"
+                    f"{icon} {task['title']}{grounding}"
                 ):
                     if task.get("validation_status") in {"review", "reject"}:
                         st.warning(
@@ -1189,15 +1218,31 @@ def main() -> None:
     with st.sidebar:
         st.subheader("Projects")
         if projects:
-            labels = {p["id"]: f"{p['name']} ({p['task_count']} tasks)" for p in projects}
+            # Two runs of the same SOW produce two projects with the same name
+            # and the same task count, so the status is part of the label: an
+            # identical pair is unreadable, and picking the wrong one silently
+            # shows yesterday's plan.
+            labels = {
+                p["id"]: (
+                    f"{_short_when(p.get('created_at'))} · {p['name']} "
+                    f"({p['task_count']} tasks) — {p['status'].replace('_', ' ')}"
+                )
+                for p in projects
+            }
+            ids = list(labels)
+            # An explicit key ties the widget to session state, and the index is
+            # derived from what is already selected. Without both, the stored
+            # selection and the highlighted row could disagree, which rendered
+            # one project's tasks under another project's heading.
+            current = st.session_state.get("project_id")
             selected = st.radio(
                 "Select a project",
-                options=list(labels),
+                options=ids,
                 format_func=lambda pid: labels[pid],
-                index=0,
+                index=ids.index(current) if current in ids else 0,
+                key="project_picker",
                 label_visibility="collapsed",
             )
-            st.session_state.setdefault("project_id", selected)
             if selected:
                 st.session_state["project_id"] = selected
         else:
