@@ -1,0 +1,302 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "SOW Pipeline: Contract to Approved Board",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "read-and-audit",
+        "label": "Read and audit",
+        "focus": [
+          "parse",
+          "extraction",
+          "audit",
+          "questions"
+        ],
+        "note": "One pass over the document yields the plan and the list of things it never stated."
+      },
+      {
+        "id": "prove-it",
+        "label": "Prove it",
+        "focus": [
+          "schedule",
+          "grounding",
+          "artifacts"
+        ],
+        "note": "Scheduling is arithmetic; grounding judges every claim against the text it cites."
+      },
+      {
+        "id": "refusals",
+        "label": "Where it stops",
+        "focus": [
+          "extraction",
+          "stop",
+          "approve",
+          "publish"
+        ],
+        "note": "An empty extraction is reported, and nothing publishes without a named approval."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "pipeline",
+      "label": "Pipeline"
+    },
+    {
+      "id": "refused",
+      "label": "Refusals",
+      "variant": "exception"
+    },
+    {
+      "id": "gaps",
+      "label": "Gap audit"
+    },
+    {
+      "id": "gate",
+      "label": "Human gate"
+    }
+  ],
+  "phases": [
+    {
+      "id": "read",
+      "label": "Read, extract, audit",
+      "fromCol": 0,
+      "toCol": 1,
+      "variant": "emphasis"
+    },
+    {
+      "id": "prove",
+      "label": "Schedule and verify",
+      "fromCol": 2,
+      "toCol": 3
+    },
+    {
+      "id": "ship",
+      "label": "Approve and ship",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "parse",
+    "extraction",
+    "schedule",
+    "grounding",
+    "artifacts",
+    "approve",
+    "publish"
+  ],
+  "semanticChecks": {
+    "allowedRoots": [
+      "parse"
+    ],
+    "allowedTerminals": [
+      "publish",
+      "stop"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "parse",
+      "lane": "pipeline",
+      "col": 0,
+      "type": "backend",
+      "label": "Parse and chunk",
+      "sublabel": "permanent keys",
+      "width": 120
+    },
+    {
+      "id": "extraction",
+      "lane": "pipeline",
+      "col": 1,
+      "type": "cloud",
+      "label": "Extract",
+      "sublabel": "requirements, tasks",
+      "width": 110
+    },
+    {
+      "id": "schedule",
+      "lane": "pipeline",
+      "col": 2,
+      "type": "backend",
+      "label": "Schedule",
+      "sublabel": "critical path, slack",
+      "width": 110
+    },
+    {
+      "id": "grounding",
+      "lane": "pipeline",
+      "col": 3,
+      "type": "security",
+      "label": "Ground claims",
+      "sublabel": "one verdict each",
+      "width": 110
+    },
+    {
+      "id": "artifacts",
+      "lane": "pipeline",
+      "col": 4,
+      "type": "cloud",
+      "label": "Derive artifacts",
+      "sublabel": "stories and criteria",
+      "width": 130
+    },
+    {
+      "id": "audit",
+      "lane": "gaps",
+      "col": 1,
+      "type": "cloud",
+      "label": "Audit 39 fields",
+      "sublabel": "stated or assumed",
+      "width": 120
+    },
+    {
+      "id": "questions",
+      "lane": "gaps",
+      "col": 2,
+      "type": "backend",
+      "label": "Client questions",
+      "sublabel": "derived, not generated",
+      "width": 130
+    },
+    {
+      "id": "approve",
+      "lane": "gate",
+      "col": 4,
+      "type": "security",
+      "label": "PM sign-off",
+      "sublabel": "nine checks first",
+      "width": 115
+    },
+    {
+      "id": "publish",
+      "lane": "gate",
+      "col": 5,
+      "type": "external",
+      "label": "Publish to Trello",
+      "sublabel": "incremental cards",
+      "width": 135
+    },
+    {
+      "id": "stop",
+      "lane": "refused",
+      "col": 3,
+      "type": "security",
+      "label": "Refuse the run",
+      "sublabel": "never silent",
+      "width": 115
+    }
+  ],
+  "edges": [
+    {
+      "id": "chunks",
+      "from": "parse",
+      "to": "extraction",
+      "label": "keyed chunks",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "tasks",
+      "from": "extraction",
+      "to": "schedule",
+      "label": "tasks and dependencies",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dated",
+      "from": "schedule",
+      "to": "grounding",
+      "label": "dated plan",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "verified",
+      "from": "grounding",
+      "to": "artifacts",
+      "label": "verified tasks",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ready",
+      "from": "artifacts",
+      "to": "approve",
+      "label": "full plan",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "shipped",
+      "from": "approve",
+      "to": "publish",
+      "label": "approved only",
+      "role": "main",
+      "variant": "security"
+    },
+    {
+      "id": "same-doc",
+      "from": "parse",
+      "to": "audit",
+      "label": "same document",
+      "role": "branch"
+    },
+    {
+      "id": "assumed",
+      "from": "audit",
+      "to": "questions",
+      "label": "assumed fields",
+      "role": "branch"
+    },
+    {
+      "id": "open",
+      "from": "questions",
+      "to": "approve",
+      "label": "open questions",
+      "role": "branch"
+    },
+    {
+      "id": "empty",
+      "from": "extraction",
+      "to": "stop",
+      "label": "zero tasks after retry",
+      "role": "error",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Five model calls",
+      "items": [
+        "Extract and audit share one read",
+        "Grounding costs two calls total",
+        "Client questions cost nothing"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Arithmetic, not inference",
+      "items": [
+        "Critical path and slack are computed",
+        "Nine validation stages are code",
+        "The model never marks its own work"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Where it stops",
+      "items": [
+        "An unreadable document halts the run",
+        "Zero tasks retries once, then fails",
+        "Nothing publishes unapproved"
+      ]
+    }
+  ]
+}

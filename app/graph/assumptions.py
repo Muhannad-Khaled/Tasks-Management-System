@@ -174,3 +174,85 @@ def grounded_fields(findings: dict[str, FieldFinding]) -> dict[str, FieldFinding
         for key, finding in findings.items()
         if finding.status in _REQUIRES_EVIDENCE and finding.value
     }
+
+
+def build_questions(
+    findings: dict[str, FieldFinding], fields: list[FieldSpec] | None = None
+) -> list[dict]:
+    """Turn every unanswered field into a question worth asking.
+
+    An assumption and a question are the same fact seen from two sides: the
+    plan runs on the assumption, and the question is what would replace it.
+    Deriving one from the other means the question set can never drift from
+    what the plan actually assumed, and costs no model call.
+
+    A field the SOW settled produces no question, which is the point — nobody
+    should be asked to confirm something the document already states.
+    """
+    fields = fields or PLANNING_FIELDS
+    questions: list[dict] = []
+    for spec in fields:
+        finding = findings.get(spec.key)
+        if finding is None or finding.status != SourceStatus.ASSUMED:
+            continue
+        hint = finding.hint.strip()
+        questions.append(
+            {
+                "question_key": f"Q-{len(questions) + 1:03d}",
+                "scope": str(spec.scope),
+                "category": spec.category,
+                "field_key": spec.key,
+                "team": str(spec.team) if spec.team else "",
+                "text": spec.question,
+                "working_assumption": hint or spec.default,
+            }
+        )
+    return questions
+
+
+def audit_coverage(
+    open_field_keys: set[str],
+    assumption_count: int | None = None,
+    fields: list[FieldSpec] | None = None,
+) -> dict:
+    """What the field audit examined, and where its sight stops.
+
+    The audit reports nine gaps and says nothing else, and nine gaps reads as
+    the whole of what the SOW left out. It is not. It is the whole of what the
+    SOW left out *among the fields listed here* — a live run on a document
+    requiring a data retention policy without stating a period produced no
+    question at all, because no field asks about retention.
+
+    For a platform whose entire claim is that it says what a document does not,
+    an unexamined subject and an examined one that came back clean cannot look
+    identical. So the scope of the check is reported alongside its result.
+
+    `answered` is derived rather than stored: a listed field with no open
+    question is one the audit found an answer for. When `assumption_count` is
+    given it is cross-checked against the open fields, since both come from the
+    same findings and any disagreement means the derivation cannot be trusted.
+    """
+    fields = fields or PLANNING_FIELDS
+    known = {spec.key for spec in fields}
+    # Questions from an older run may name a field the list has since dropped.
+    # Counting those as open would report more gaps than there are fields.
+    open_keys = open_field_keys & known
+    answered = [spec for spec in fields if spec.key not in open_keys]
+
+    reliable = assumption_count is None or assumption_count == len(open_keys)
+    return {
+        "checked": len(fields),
+        "answered": len(answered),
+        "open": len(open_keys),
+        "reliable": reliable,
+        "answered_fields": [
+            {"key": spec.key, "label": spec.label, "question": spec.question}
+            for spec in answered
+        ],
+        "boundary": (
+            f"The audit asks {len(fields)} questions of every SOW. Anything outside "
+            "them was not examined, so silence here is not a finding — a subject "
+            "this list does not cover produces no gap however little the document "
+            "says about it."
+        ),
+    }

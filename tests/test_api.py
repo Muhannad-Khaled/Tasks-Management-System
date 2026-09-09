@@ -34,7 +34,7 @@ def seeded_project(db):
 
 def test_tasks_expose_their_evidence_keys(client, seeded_project):
     tasks = client.get(f"/projects/{seeded_project.id}/tasks").json()
-    assert len(tasks) == 3
+    assert len(tasks) == 4
     assert all(t["source_chunk_keys"] for t in tasks)
 
 
@@ -133,9 +133,9 @@ def test_grounding_endpoint_reports_scores_and_names_the_failures(client, seeded
     data = client.get(f"/projects/{seeded_project.id}/grounding").json()
     # The stub supports one claim per task and fails the quantitative one.
     assert data["overall_score"] == pytest.approx(0.5)
-    assert data["total_claims"] == 6
+    assert data["total_claims"] == 8
     assert set(data["by_team"]) == {"commercial", "technical", "operations"}
-    assert len(data["failures"]) == 3
+    assert len(data["failures"]) == 4
     assert all(f["claim"] and f["reasoning"] for f in data["failures"])
     assert {s["stage"] for s in data["validation_stages"]} == {
         "schema",
@@ -144,6 +144,12 @@ def test_grounding_endpoint_reports_scores_and_names_the_failures(client, seeded
         "business_rules",
         "dependencies",
         "timeline",
+        # Checks the dates the SOW commits to between kickoff and go-live.
+        "milestones",
+        # One person needed in two places at once, now that tasks carry names.
+        "staffing",
+        # Recorded after run_validation, by the node that derives the artifacts.
+        "derived_artifacts",
     }
 
 
@@ -160,5 +166,111 @@ def test_tasks_expose_their_grounding_score(client, seeded_project):
 def test_project_list_reports_task_and_assumption_counts(client, seeded_project):
     projects = client.get("/projects").json()
     row = next(p for p in projects if p["id"] == seeded_project.id)
-    assert row["task_count"] == 3
+    assert row["task_count"] == 4
     assert row["assumption_count"] == len(PLANNING_FIELDS) - 1
+
+
+def test_the_timeline_says_how_much_of_it_was_actually_estimated(client, seeded_project):
+    # Dates built on a one-day default read exactly like dates built on real
+    # estimates. The schedule has to disclose which it is.
+    timeline = client.get(f"/projects/{seeded_project.id}/timeline").json()
+
+    assert "estimate_coverage" in timeline
+    assert timeline["estimate_coverage"] == 1.0, "the stub estimates every task"
+    assert timeline["assumed_durations"] == []
+
+
+def test_the_timeline_names_the_tasks_running_on_the_default(client, seeded_project, db):
+    from app.models import ProjectTask
+
+    task = db.query(ProjectTask).filter(ProjectTask.project_id == seeded_project.id).first()
+    title = task.title
+    task.estimated_hours = None
+    db.commit()
+
+    timeline = client.get(f"/projects/{seeded_project.id}/timeline").json()
+
+    assert timeline["estimate_coverage"] < 1.0
+    assert title in [t["title"] for t in timeline["assumed_durations"]]
+
+
+def test_the_timeline_calibrates_estimates_against_the_sow_windows(client, seeded_project):
+    timeline = client.get(f"/projects/{seeded_project.id}/timeline").json()
+
+    assert "calibration" in timeline
+    calibration = timeline["calibration"]
+    assert set(calibration) >= {"segments", "allowed_days", "planned_days", "by_step"}
+
+
+def test_calibration_reports_each_agreed_window_separately(client, seeded_project, db):
+    # A whole-project total can look healthy while an individual step is
+    # estimated at a third of the time it was given.
+    from datetime import date
+
+    from app.models import ProjectMilestone, ProjectTask
+
+    tasks = db.query(ProjectTask).filter(ProjectTask.project_id == seeded_project.id).all()
+    # Replace the stub's own milestones so the windows under test are the only ones.
+    from app.models import milestone_tasks
+
+    existing = [
+        m.id
+        for m in db.query(ProjectMilestone.id).filter(
+            ProjectMilestone.project_id == seeded_project.id
+        )
+    ]
+    if existing:
+        db.execute(milestone_tasks.delete().where(milestone_tasks.c.milestone_id.in_(existing)))
+    db.query(ProjectMilestone).filter(
+        ProjectMilestone.project_id == seeded_project.id
+    ).delete()
+    first = ProjectMilestone(
+        project_id=seeded_project.id, name="Contract", target_date=date(2026, 10, 2)
+    )
+    first.tasks.append(tasks[0])
+    second = ProjectMilestone(
+        project_id=seeded_project.id, name="Integration", target_date=date(2026, 12, 1)
+    )
+    second.tasks.append(tasks[-1])
+    db.add_all([first, second])
+    db.commit()
+
+    calibration = client.get(f"/projects/{seeded_project.id}/timeline").json()["calibration"]
+
+    names = [s["name"] for s in calibration["by_step"]]
+    assert names == ["Contract", "Integration"]
+    integration = calibration["by_step"][1]
+    assert integration["after"] == "Contract"
+    assert integration["allowed_days"] > integration["planned_days"]
+    assert integration["unaccounted_days"] > 0
+
+
+def test_all_evidence_comes_back_in_one_call(client, seeded_project):
+    # The task list fetched one chunk per citation, and Streamlit renders the
+    # body of a collapsed expander too, so those ran on every page render.
+    tasks = client.get(f"/projects/{seeded_project.id}/tasks").json()
+    cited = {k for t in tasks for k in t["source_chunk_keys"]}
+
+    bundle = client.get(f"/projects/{seeded_project.id}/evidence").json()
+
+    assert set(bundle) == cited
+    assert all(v["text"].strip() for v in bundle.values())
+
+
+def test_the_bundle_matches_what_the_single_lookup_returns(client, seeded_project):
+    bundle = client.get(f"/projects/{seeded_project.id}/evidence").json()
+    key = next(iter(bundle))
+
+    single = client.get(f"/projects/{seeded_project.id}/evidence/{key}").json()
+
+    assert bundle[key] == single
+
+
+def test_a_project_citing_nothing_gets_an_empty_bundle(client, db):
+    from app.models import Project
+
+    empty = Project(name="No citations", status=ProjectStatus.INGESTING)
+    db.add(empty)
+    db.commit()
+
+    assert client.get(f"/projects/{empty.id}/evidence").json() == {}

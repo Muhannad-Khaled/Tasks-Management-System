@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     plane_api_key: str = ""
     discord_webhook_url: str = ""
     upload_dir: str = "./uploads"
+    # How often to read the boards, in seconds. 0 turns the watcher off.
+    # None means "not configured", so the default lives in one place — beside
+    # the watcher it belongs to — rather than being repeated here.
+    board_watch_seconds: int | None = None
 
 
 @lru_cache

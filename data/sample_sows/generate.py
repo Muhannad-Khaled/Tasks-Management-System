@@ -6,14 +6,13 @@ Run from the repo root:
 
 from pathlib import Path
 
+from content import ALL_SOWS
 from docx import Document
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from reportlab.lib import colors
-
-from content import ALL_SOWS
 
 OUT_DIR = Path(__file__).parent
 

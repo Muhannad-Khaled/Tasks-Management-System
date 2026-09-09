@@ -14,18 +14,36 @@ rather than finding a shorter plan with no explanation.
 from __future__ import annotations
 
 import logging
+import re
+from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from sqlalchemy.orm import Session
 
 from app.grounding.engine import GroundingStatus, TaskGrounding, project_grounding_score
-from app.models import ProjectTask, SOWChunk, ValidationLog
+from app.models import (
+    ProjectMilestone,
+    ProjectRole,
+    ProjectTask,
+    ProjectTestCase,
+    SOWChunk,
+    UserStory,
+    ValidationLog,
+)
 from app.planning.dependencies import build_dependency_graph
-from app.schemas.enums import Team
+from app.planning.milestones import check_milestones, milestone_summary
+from app.schemas.enums import SourceStatus, StoryKind, Team
 
 logger = logging.getLogger(__name__)
 
 VALIDATOR_VERSION = "v1"
+
+_NUMBER = re.compile(r"\d")
+
+
+def _asserts_a_number(text: str) -> bool:
+    return bool(_NUMBER.search(text or ""))
 
 # Words that signal a task belongs to a particular team. Used to catch an item
 # filed under the wrong team, which would send it to the wrong Trello list and
@@ -35,6 +53,10 @@ VALIDATOR_VERSION = "v1"
 # "Configure Points Calculation & Expiry Engine" as operations work when
 # configuring a calculation engine is plainly technical. Operations signals name
 # what operations configures — merchants, stores, offers — not the act itself.
+# Matched on word boundaries, never as substrings. "auth" inside "authorise"
+# filed a contract signing under the technical team on a live run, and the
+# same trap is set by "engine" in "engineer", "sla" in "translate" and "api"
+# in "capital" — a whole class of wrong answers from one missing \b.
 TEAM_SIGNALS = {
     Team.COMMERCIAL: (
         "contract",
@@ -49,7 +71,10 @@ TEAM_SIGNALS = {
         "api",
         "integration",
         "endpoint",
-        "auth",
+        # Not "auth": it is a prefix of ordinary contract language. The two
+        # phrases below are what the technical work is actually called.
+        "authentication",
+        "authorisation flow",
         "engine",
         "calculation",
         "accrual logic",
@@ -147,13 +172,25 @@ def validate_evidence(db: Session, tasks: list[ProjectTask]) -> StageResult:
     )
 
 
+@lru_cache(maxsize=256)
+def _signal_pattern(signal: str) -> re.Pattern[str]:
+    return re.compile(rf"\b{re.escape(signal)}\b")
+
+
+def _mentions(text: str, signal: str) -> bool:
+    """Whether the text uses this word, rather than merely containing it."""
+    return _signal_pattern(signal).search(text) is not None
+
+
 def validate_business_rules(tasks: list[ProjectTask]) -> StageResult:
     """Catch a task filed under a team its own wording contradicts."""
     problems = []
     for task in tasks:
         text = f"{task.title} {task.description}".lower()
         matches = {
-            team for team, signals in TEAM_SIGNALS.items() if any(s in text for s in signals)
+            team
+            for team, signals in TEAM_SIGNALS.items()
+            if any(_mentions(text, signal) for signal in signals)
         }
         # Only flag when the wording points at exactly one team and it is not this one.
         if len(matches) == 1 and task.team not in {t.value for t in matches}:
@@ -167,14 +204,73 @@ def validate_business_rules(tasks: list[ProjectTask]) -> StageResult:
 
 
 def validate_dependencies(tasks: list[ProjectTask]) -> StageResult:
+    """The arrows must form a runnable graph, and say where they came from.
+
+    Shape is not the only thing that can be wrong with a dependency. An arrow
+    the plan presents as the SOW's own ordering, with nothing behind it, is a
+    fabricated constraint — and it does more damage than a fabricated fact,
+    because it silently moves every date downstream of it.
+    """
     graph = build_dependency_graph({t.id: [d.id for d in t.depends_on] for t in tasks})
+    problems = [] if graph.is_valid else [t.id for t in tasks]
+    notes = [i.detail for i in graph.issues[:3]]
+
+    unsourced: list[str] = []
+    for task in tasks:
+        for link in task.blockers:
+            if link.source_status == str(SourceStatus.EXPLICIT) and not link.source_chunk_keys:
+                unsourced.append(task.id)
+                notes.append(
+                    f"{task.title!r} waits on {link.upstream.title!r} as though the "
+                    "SOW said so, but cites nothing"
+                )
+    problems.extend(unsourced)
+
+    if not notes:
+        arrows = [link for t in tasks for link in t.blockers]
+        judged = sum(1 for link in arrows if link.source_status != str(SourceStatus.EXPLICIT))
+        notes.append(
+            f"no cycles or dangling dependencies; {len(arrows)} dependency(s), "
+            f"{judged} not stated by the SOW"
+        )
+
     return StageResult(
         stage="dependencies",
-        passed=graph.is_valid,
+        passed=graph.is_valid and not unsourced,
+        detail="; ".join(notes[:4]),
+        offending_task_ids=sorted(set(problems)),
+    )
+
+
+def validate_milestones(db: Session, project_id: str) -> StageResult:
+    """The plan must answer to the dates in between, not just the final one.
+
+    Checking only the deadline passes a schedule that finishes six weeks early
+    because nobody estimated the work — every agreed checkpoint missed, in the
+    direction that looks like good news.
+    """
+    rows = db.query(ProjectMilestone).filter(ProjectMilestone.project_id == project_id).all()
+    if not rows:
+        return StageResult(
+            stage="milestones",
+            passed=True,
+            detail="the SOW states no intermediate milestones",
+        )
+
+    checks = check_milestones(
+        [(m.name, m.target_date, [(t.title, t.due_date) for t in m.tasks]) for m in rows]
+    )
+    summary = milestone_summary(checks)
+    messages = summary["breaches"] + summary["warnings"]
+    return StageResult(
+        stage="milestones",
+        # Only a late milestone fails: it breaks what was agreed. Finishing
+        # early is a signal about the estimates, not a broken promise.
+        passed=not summary["breaches"],
         detail=(
-            "; ".join(i.detail for i in graph.issues[:3])
-            if graph.issues
-            else "no cycles or dangling dependencies"
+            f"{summary['on_track']}/{summary['total']} on track, "
+            f"{summary['late']} late, {summary['early']} far early"
+            + ("; " + "; ".join(messages[:3]) if messages else "")
         ),
     )
 
@@ -203,6 +299,218 @@ def validate_timeline(tasks: list[ProjectTask], deadline) -> StageResult:
     )
 
 
+def validate_derived_artifacts(db: Session, project_id: str) -> StageResult:
+    """Check the derived layer holds together and declares what it stands on.
+
+    Deterministic on purpose. A user story is a restatement, so judging it with
+    the model would score a legitimate derivation as unsupported; what can be
+    checked without one is that nothing is orphaned and that no test asserting
+    a number hides where the number came from.
+    """
+    stories = db.query(UserStory).filter(UserStory.project_id == project_id).all()
+    cases = db.query(ProjectTestCase).filter(ProjectTestCase.project_id == project_id).all()
+    if not stories and not cases:
+        return StageResult(
+            stage="derived_artifacts", passed=True, detail="no derived artifacts to check"
+        )
+
+    problems: list[str] = []
+    client_stories = [s for s in stories if s.kind != str(StoryKind.ENGINEER)]
+    engineer_stories = [s for s in stories if s.kind == str(StoryKind.ENGINEER)]
+
+    orphans = [s.story_key for s in client_stories if s.requirement_id is None]
+    if orphans:
+        problems.append(f"{len(orphans)} story(s) not linked to a requirement")
+
+    untasked = [s.story_key for s in engineer_stories if s.task_id is None]
+    if untasked:
+        problems.append(f"{len(untasked)} engineer story(s) not linked to a task")
+
+    storyless = [c.case_key for c in cases if c.user_story_id is None]
+    if storyless:
+        problems.append(f"{len(storyless)} test case(s) not linked to a story")
+
+    criterionless = [s.story_key for s in stories if not s.acceptance_criteria]
+    if criterionless:
+        problems.append(f"{len(criterionless)} story(s) with no acceptance criteria")
+
+    # "As a support agent, I want to deliver training" is a task wearing a user
+    # story's grammar. It cannot be accepted by anyone outside the project.
+    # Only client stories are judged by this: an engineer story is addressed to
+    # the delivery role that owns the task, which is the point of it.
+    inward = [s.story_key for s in client_stories if s.actor_is_delivery_side]
+    if inward:
+        problems.append(
+            f"{len(inward)} story(s) written from the delivery team's point of view "
+            f"rather than a user's: {inward[:3]}"
+        )
+
+    # The same standard test cases are held to. A threshold on a card is read
+    # as something the client agreed to, so one that cites nothing is worse
+    # than no threshold at all.
+    uncited = [
+        criterion.criterion_key
+        for story in stories
+        for criterion in story.acceptance_criteria
+        if criterion.measure and not criterion.source_chunk_keys
+    ]
+    if uncited:
+        problems.append(
+            f"{len(uncited)} acceptance criterion(s) set a threshold with nothing in "
+            f"the SOW behind it: {uncited[:3]}"
+        )
+
+    unsourced_notes = [
+        s.story_key for s in stories if s.technical_notes and not s.technical_notes_chunk_keys
+    ]
+    if unsourced_notes:
+        problems.append(
+            f"{len(unsourced_notes)} story(s) carry technical notes citing no detail "
+            f"the SOW stated: {unsourced_notes[:3]}"
+        )
+
+    # A number in an expected result either traces to the SOW or names the
+    # assumption it came from. Silence is the failure mode that matters: it
+    # reads as fact and gets signed off as one.
+    unexplained = [
+        c.case_key
+        for c in cases
+        if _asserts_a_number(c.expected_result)
+        and not c.assumed_fields
+        and not (c.user_story and c.user_story.source_chunk_keys)
+    ]
+    if unexplained:
+        problems.append(
+            f"{len(unexplained)} test case(s) assert a number with neither evidence "
+            f"nor a named assumption: {unexplained[:3]}"
+        )
+
+    # A criterion stating no number is checked by nothing. The grounding engine
+    # runs before these exist and reads task descriptions, not criteria, so
+    # "the dynamic campaign engine evaluates AI segmentation models" is stored
+    # and shipped to a board without ever being compared against the SOW — and
+    # a campaign engine is precisely what grounding rejected on a live run when
+    # the same words appeared in a task.
+    #
+    # It cannot be settled here without a model call. What can be done is to
+    # stop the silence reading as a pass: an engineer story whose task the
+    # grounding engine rejected has criteria derived from rejected wording.
+    ungrounded = [
+        story.story_key
+        for story in engineer_stories
+        if story.task is not None
+        and story.task.validation_status in {"reject", "unsupported"}
+        and story.acceptance_criteria
+    ]
+    if ungrounded:
+        problems.append(
+            f"{len(ungrounded)} story(s) carry acceptance criteria derived from a task "
+            f"the grounding engine rejected: {ungrounded[:3]}"
+        )
+
+    resting = [c.case_key for c in cases if c.rests_on_assumption]
+    measured = [c for s in stories for c in s.acceptance_criteria if c.measure]
+    unmeasured = sum(len(s.acceptance_criteria) for s in stories) - len(measured)
+    return StageResult(
+        stage="derived_artifacts",
+        passed=not problems,
+        detail=(
+            "; ".join(problems)
+            if problems
+            else (
+                f"{len(stories)} story(s), {len(cases)} test case(s); "
+                f"{len(resting)} rest on an assumed value. "
+                # Said the way the gap audit says how far it looked. A pass
+                # here covers thresholds and links; it says nothing about
+                # whether the wording of a criterion is true, and a reader
+                # who is not told that will assume it does.
+                f"{len(measured)} criterion(s) carry a threshold checked against the "
+                f"SOW; the wording of the other {unmeasured} was not verified against "
+                "the document."
+            )
+        ),
+    )
+
+
+def record_stage(db: Session, project_id: str, stage: StageResult) -> None:
+    """Append one stage's outcome, replacing any earlier run of that stage.
+
+    Used by stages that run outside run_validation, which wipes the log before
+    writing its own.
+    """
+    db.query(ValidationLog).filter(
+        ValidationLog.project_id == project_id, ValidationLog.stage == stage.stage
+    ).delete()
+    db.add(
+        ValidationLog(
+            project_id=project_id,
+            stage=stage.stage,
+            passed=stage.passed,
+            detail=stage.detail,
+            grounding_score=stage.grounding_score,
+            validator_version=VALIDATOR_VERSION,
+        )
+    )
+    db.commit()
+
+
+def _owner_of(db: Session, task: ProjectTask) -> str:
+    """The person doing this task, by the same rule the card body uses."""
+    if task.assignee:
+        return task.assignee
+    role = (
+        db.query(ProjectRole)
+        .filter(
+            ProjectRole.project_id == task.project_id,
+            ProjectRole.role_title == task.assignee_role,
+        )
+        .first()
+    )
+    return role.person.name if role and role.person else ""
+
+
+def validate_staffing(db: Session, tasks: list[ProjectTask]) -> StageResult:
+    """One person cannot be in two places at once.
+
+    A warning rather than a failure, like every other schedule finding here.
+    Someone genuinely may split a week across two small tasks, and the platform
+    has no way to know which case this is — but it does know the dates overlap,
+    and saying so is the whole job.
+    """
+    scheduled: dict[str, list[ProjectTask]] = defaultdict(list)
+    for task in tasks:
+        if task.start_date and task.due_date and (owner := _owner_of(db, task)):
+            scheduled[owner].append(task)
+
+    clashes: list[str] = []
+    offenders: list[str] = []
+    for owner, owned in scheduled.items():
+        owned.sort(key=lambda t: t.start_date)
+        # Carry the task that runs latest rather than simply the previous one:
+        # a long task overlaps everything that starts before it ends, and
+        # comparing neighbours would miss all but the first of them.
+        running = owned[0]
+        for task in owned[1:]:
+            # Inclusive dates: finishing and starting on the same day is one
+            # person working both, not a clean handover.
+            if task.start_date <= running.due_date:
+                days = (running.due_date - task.start_date).days + 1
+                clashes.append(
+                    f"{owner} is on {running.title!r} and {task.title!r} "
+                    f"at the same time ({days} day(s) overlapping)"
+                )
+                offenders += [running.id, task.id]
+            if task.due_date > running.due_date:
+                running = task
+
+    return StageResult(
+        stage="staffing",
+        passed=not clashes,
+        detail="; ".join(clashes) if clashes else f"{len(scheduled)} person(s), no clashes",
+        offending_task_ids=sorted(set(offenders)),
+    )
+
+
 def run_validation(
     db: Session,
     project_id: str,
@@ -218,6 +526,8 @@ def run_validation(
             validate_business_rules(tasks),
             validate_dependencies(tasks),
             validate_timeline(tasks, deadline),
+            validate_milestones(db, project_id),
+            validate_staffing(db, tasks),
         ]
     )
 

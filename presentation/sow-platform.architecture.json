@@ -1,0 +1,347 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "SOW-to-Project Execution Platform",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1380,
+      760
+    ],
+    "views": [
+      {
+        "id": "ingest-and-cite",
+        "label": "Ingest and cite",
+        "focus": [
+          "sow",
+          "parser",
+          "graph",
+          "postgres"
+        ],
+        "note": "Every paragraph becomes a citable unit with a permanent key before any model sees it."
+      },
+      {
+        "id": "verification",
+        "label": "Grounding",
+        "focus": [
+          "graph",
+          "gemini",
+          "grounding",
+          "chroma"
+        ],
+        "note": "Tasks are split into atomic claims and each is judged against the cited contract text."
+      },
+      {
+        "id": "human-gate",
+        "label": "Human gate",
+        "focus": [
+          "postgres",
+          "ui",
+          "gate",
+          "trello"
+        ],
+        "note": "Nothing reaches the delivery board without a named project-manager approval."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "sow",
+      "type": "external",
+      "label": "SOW Document",
+      "sublabel": "PDF / DOCX",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "parser",
+      "type": "backend",
+      "label": "Parse and chunk",
+      "sublabel": "pdfplumber",
+      "tag": "chunk keys",
+      "pos": [
+        285,
+        300
+      ],
+      "size": [
+        160,
+        68
+      ]
+    },
+    {
+      "id": "graph",
+      "type": "backend",
+      "label": "Extract and derive",
+      "sublabel": "requirements to stories",
+      "pos": [
+        540,
+        300
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "system of record",
+      "tag": "audit log",
+      "pos": [
+        835,
+        300
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "Review Console",
+      "sublabel": "Streamlit",
+      "pos": [
+        1100,
+        300
+      ],
+      "size": [
+        175,
+        68
+      ]
+    },
+    {
+      "id": "gemini",
+      "type": "cloud",
+      "label": "Google Gemini",
+      "sublabel": "5 calls per project",
+      "pos": [
+        540,
+        120
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "planner",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "networkx CPM",
+      "tag": "no AI",
+      "pos": [
+        300,
+        485
+      ],
+      "size": [
+        175,
+        68
+      ]
+    },
+    {
+      "id": "grounding",
+      "type": "security",
+      "label": "Grounding Engine",
+      "sublabel": "claim verdicts",
+      "pos": [
+        540,
+        485
+      ],
+      "size": [
+        190,
+        68
+      ]
+    },
+    {
+      "id": "chroma",
+      "type": "database",
+      "label": "ChromaDB",
+      "sublabel": "SOW embeddings",
+      "pos": [
+        790,
+        485
+      ],
+      "size": [
+        175,
+        68
+      ]
+    },
+    {
+      "id": "gate",
+      "type": "security",
+      "label": "Approval Gate",
+      "sublabel": "project manager",
+      "pos": [
+        1100,
+        485
+      ],
+      "size": [
+        175,
+        68
+      ]
+    },
+    {
+      "id": "trello",
+      "type": "external",
+      "label": "Trello Board",
+      "sublabel": "delivery cards",
+      "pos": [
+        1100,
+        665
+      ],
+      "size": [
+        175,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "LangGraph pipeline: 9 nodes",
+      "wraps": [
+        "parser",
+        "graph",
+        "planner",
+        "grounding"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Human-in-the-loop control",
+      "wraps": [
+        "ui",
+        "gate"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "upload",
+      "from": "sow",
+      "to": "parser",
+      "label": "upload",
+      "variant": "emphasis"
+    },
+    {
+      "id": "chunks",
+      "from": "parser",
+      "to": "graph",
+      "label": "keyed chunks",
+      "variant": "emphasis"
+    },
+    {
+      "id": "model-calls",
+      "from": "graph",
+      "to": "gemini",
+      "label": "structured output",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "schedule",
+      "from": "graph",
+      "to": "planner",
+      "label": "critical path",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "verify",
+      "from": "graph",
+      "to": "grounding",
+      "label": "atomic claims",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 40,
+      "labelDx": 55
+    },
+    {
+      "id": "evidence",
+      "from": "grounding",
+      "to": "chroma",
+      "label": "evidence",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "persist",
+      "from": "graph",
+      "to": "postgres",
+      "label": "persist",
+      "variant": "emphasis"
+    },
+    {
+      "id": "read-plan",
+      "from": "postgres",
+      "to": "ui",
+      "label": "plan + claims"
+    },
+    {
+      "id": "review",
+      "from": "ui",
+      "to": "gate",
+      "label": "PM review",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 40
+    },
+    {
+      "id": "publish",
+      "from": "gate",
+      "to": "trello",
+      "label": "approved only",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 55
+    },
+    {
+      "id": "drift",
+      "from": "trello",
+      "to": "ui",
+      "label": "drift",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "right"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Traceability",
+      "items": [
+        "Permanent keys such as SOW-018-S09-C01",
+        "Clause to requirement to task to card",
+        "An uncited number is dropped, never stored"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Deterministic by design",
+      "items": [
+        "Schedule and critical path are arithmetic",
+        "Nine validation stages are ordinary code",
+        "The model never marks its own work"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Control",
+      "items": [
+        "Five model calls per project",
+        "Nothing publishes without a named approval",
+        "Card edits are reported back as drift"
+      ]
+    }
+  ]
+}

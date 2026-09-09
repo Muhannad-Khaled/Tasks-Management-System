@@ -47,11 +47,14 @@ def apply_edit(db: Session, task: ProjectTask, **fields) -> ProjectTask:
     described the generated wording, and keeping it against text a human
     rewrote would misreport where that text came from.
     """
-    editable = {"title", "description", "team", "priority", "estimated_hours"}
+    editable = {"title", "description", "team", "estimated_hours"}
     for key, value in fields.items():
         if key in editable and value is not None:
             setattr(task, key, value)
     task.review_status = str(ReviewStatus.EDITED)
+    # The card on the board now shows wording nobody kept. Flagging it here is
+    # what lets a later push refresh this one card and leave the rest alone.
+    task.board_dirty = True
     task.grounding_score = None
     task.validation_status = "pending"
     db.query(ClaimRecord).filter(ClaimRecord.task_id == task.id).delete()
@@ -143,7 +146,6 @@ def regenerate_task(
 
     task.title = replacement.title or task.title
     task.description = replacement.description
-    task.priority = str(replacement.priority)
     task.source_status = str(replacement.source_status)
     if replacement.estimated_hours:
         task.estimated_hours = replacement.estimated_hours
@@ -152,6 +154,7 @@ def regenerate_task(
     task.regeneration_count += 1
     task.review_status = str(ReviewStatus.PENDING)
     task.review_note = ""
+    task.board_dirty = True
     db.commit()
 
     # Re-ground the replacement so its score describes the new wording.

@@ -32,8 +32,13 @@ class PlanTask:
     estimated_hours: float | None = None
 
     @property
+    def duration_is_assumed(self) -> bool:
+        """Whether nobody estimated this and the default is standing in."""
+        return not self.estimated_hours or self.estimated_hours <= 0
+
+    @property
     def duration_days(self) -> int:
-        if not self.estimated_hours or self.estimated_hours <= 0:
+        if self.duration_is_assumed:
             return DEFAULT_DURATION_DAYS
         return max(1, math.ceil(self.estimated_hours / HOURS_PER_DAY))
 
@@ -50,6 +55,7 @@ class ScheduledTask:
     slack_days: int
     start_date: date
     due_date: date
+    duration_is_assumed: bool = False
 
     @property
     def is_critical(self) -> bool:
@@ -63,6 +69,18 @@ class Schedule:
     project_end: date | None = None
     duration_days: int = 0
     deadline_breach: str | None = None
+
+    @property
+    def assumed_durations(self) -> list[ScheduledTask]:
+        """Tasks whose dates rest on the default rather than an estimate."""
+        return [t for t in self.tasks.values() if t.duration_is_assumed]
+
+    @property
+    def estimate_coverage(self) -> float:
+        """Share of tasks whose duration someone actually judged."""
+        if not self.tasks:
+            return 1.0
+        return 1 - len(self.assumed_durations) / len(self.tasks)
 
     @property
     def critical_path(self) -> list[ScheduledTask]:
@@ -142,6 +160,7 @@ def compute_schedule(
             start_date=task_start,
             # A one-day task starts and finishes the same day.
             due_date=add_working_days(task_start, duration[task_id] - 1),
+            duration_is_assumed=task.duration_is_assumed,
         )
 
     schedule = Schedule(
@@ -158,3 +177,15 @@ def compute_schedule(
             f"{overrun} day(s) past the SOW date of {deadline.isoformat()}."
         )
     return schedule
+
+
+def working_days_between(start: date, end: date) -> int:
+    """Whole working days from start to end. Negative spans count as zero."""
+    if end <= start:
+        return 0
+    current, days = start, 0
+    while current < end:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            days += 1
+    return days

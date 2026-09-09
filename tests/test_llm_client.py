@@ -47,6 +47,7 @@ def _only_this_model_works(client, working: str, error: Exception) -> list[str]:
     return calls
 
 
+@pytest.mark.builds_a_real_client
 def test_a_busy_model_falls_back_to_one_that_answers(client):
     # Reproduces a real failure: the configured model returned 503 for minutes
     # while a sibling answered instantly.
@@ -57,6 +58,7 @@ def test_a_busy_model_falls_back_to_one_that_answers(client):
     assert client.model == "gemini-3.6-flash", "audit must record the model that served"
 
 
+@pytest.mark.builds_a_real_client
 def test_quota_on_one_model_moves_to_the_next(client):
     calls = _only_this_model_works(
         client, "gemini-flash-latest", QuotaExhausted(OUT_OF_QUOTA)
@@ -65,6 +67,7 @@ def test_quota_on_one_model_moves_to_the_next(client):
     assert len(calls) == 3, "should exhaust the earlier candidates first"
 
 
+@pytest.mark.builds_a_real_client
 def test_every_model_failing_reports_what_was_tried(client):
     def fake(prompt_text, system, schema):
         raise TransientLLMError(BUSY)
@@ -74,12 +77,14 @@ def test_every_model_failing_reports_what_was_tried(client):
         client._generate("p", "s", dict)
 
 
+@pytest.mark.builds_a_real_client
 def test_the_configured_model_is_always_tried_first(client):
     client.model = "gemini-3.6-flash"
     assert client._model_candidates()[0] == "gemini-3.6-flash"
     assert len(set(client._model_candidates())) == len(client._model_candidates())
 
 
+@pytest.mark.builds_a_real_client
 def test_input_hash_distinguishes_model_and_schema():
     # The cache is keyed on this; colliding keys would serve one model's output
     # as another's.

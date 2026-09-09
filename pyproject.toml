@@ -42,6 +42,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "builds_a_real_client: exercises GeminiClient itself, over a mocked transport",
+]
 
 [tool.ruff]
 line-length = 100
