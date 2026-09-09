@@ -126,7 +126,6 @@ def _board_task(db: Session, task: ProjectTask, derived: dict[str, dict]) -> Boa
         title=task.title,
         description=task.description,
         team=task.team,
-        priority=task.priority,
         status=task.status,
         due_date=task.due_date,
         assignee_role=task.assignee_role,

@@ -167,7 +167,6 @@ class ProjectTask(Base):
     requirement_id: Mapped[str | None] = mapped_column(
         ForeignKey("project_requirements.id"), nullable=True
     )
-    priority: Mapped[str] = mapped_column(String(16), default="medium")
     status: Mapped[str] = mapped_column(String(32), default="backlog")
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)

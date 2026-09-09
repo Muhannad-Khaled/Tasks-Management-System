@@ -29,7 +29,6 @@ def _task(**kwargs) -> BoardTask:
         "title": "Develop the POS integration",
         "description": "Build it.",
         "team": "technical",
-        "priority": "high",
         "status": "backlog",
     }
     return BoardTask(**{**defaults, **kwargs})
@@ -70,10 +69,8 @@ def test_provenance_reaches_the_board(source_status, expected):
     assert expected in _task(source_status=source_status).labels()
 
 
-def test_team_and_priority_are_labelled():
-    labels = _task(team="operations", priority="low").labels()
-    assert "TEAM-OPERATIONS" in labels
-    assert "PRIORITY-LOW" in labels
+def test_the_team_is_labelled():
+    assert "TEAM-OPERATIONS" in _task(team="operations").labels()
 
 
 def test_the_role_is_a_label_so_the_board_can_be_filtered_by_it():
@@ -105,15 +102,13 @@ def test_every_label_the_code_emits_has_a_colour():
     for source in ("explicit", "inferred", "assumed", "weird"):
         for verdict in ("accept", "review", "reject", "pending"):
             for team in ("commercial", "technical", "operations"):
-                for priority in ("high", "medium", "low"):
-                    emitted |= set(
-                        _task(
-                            source_status=source,
-                            validation_status=verdict,
-                            team=team,
-                            priority=priority,
-                        ).labels()
-                    )
+                emitted |= set(
+                    _task(
+                        source_status=source,
+                        validation_status=verdict,
+                        team=team,
+                    ).labels()
+                )
     unmapped = {lbl for lbl in emitted if lbl not in LABEL_COLORS}
     assert not unmapped, f"unmapped labels: {unmapped}"
 
@@ -436,7 +431,7 @@ def test_an_edited_task_gets_a_pushable_colour_for_every_label():
 
     colours = [label_color(name) for name in task.labels()]
 
-    assert colours, "a task with no labels would hide its team and priority"
+    assert colours, "a task with no labels would hide its team and provenance"
     assert all(c in TRELLO_LABEL_COLORS for c in colours), dict(
         zip(task.labels(), colours, strict=True)
     )

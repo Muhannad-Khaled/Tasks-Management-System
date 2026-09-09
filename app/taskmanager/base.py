@@ -68,7 +68,6 @@ class BoardTask:
     title: str
     description: str
     team: str
-    priority: str
     status: str
     due_date: date | None = None
     assignee: str = ""
@@ -110,7 +109,7 @@ class BoardTask:
         label — because its source was explicit — telling the team the SOW
         fully supported work the system had just rejected.
         """
-        labels = [f"TEAM-{self.team.upper()}", f"PRIORITY-{self.priority.upper()}"]
+        labels = [f"TEAM-{self.team.upper()}"]
         if self.assignee_role:
             # A role label is the closest thing to "my cards" on a board with
             # no people on it, and filtering is the whole reason to assign.

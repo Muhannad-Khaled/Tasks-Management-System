@@ -47,7 +47,7 @@ def apply_edit(db: Session, task: ProjectTask, **fields) -> ProjectTask:
     described the generated wording, and keeping it against text a human
     rewrote would misreport where that text came from.
     """
-    editable = {"title", "description", "team", "priority", "estimated_hours"}
+    editable = {"title", "description", "team", "estimated_hours"}
     for key, value in fields.items():
         if key in editable and value is not None:
             setattr(task, key, value)
@@ -146,7 +146,6 @@ def regenerate_task(
 
     task.title = replacement.title or task.title
     task.description = replacement.description
-    task.priority = str(replacement.priority)
     task.source_status = str(replacement.source_status)
     if replacement.estimated_hours:
         task.estimated_hours = replacement.estimated_hours

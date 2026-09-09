@@ -387,7 +387,6 @@ class StubLLM:
                     team="commercial",
                     title="Finalize merchant contract",
                     description="Countersign before integration starts.",
-                    priority="high",
                     estimated_hours=8,
                     source_status="explicit",
                     source_chunk_keys=self.citations,
@@ -400,7 +399,6 @@ class StubLLM:
                     team="technical",
                     title="Develop POS API integration",
                     description="REST integration for points accrual.",
-                    priority="high",
                     estimated_hours=60,
                     # Ordered by the SOW itself, with the chunk that says so.
                     depends_on=[
@@ -426,7 +424,6 @@ class StubLLM:
                     team="technical",
                     title="Author the integration design document",
                     description="Interfaces, error handling and rollback, for review.",
-                    priority="medium",
                     estimated_hours=20,
                     source_status="explicit",
                     source_chunk_keys=self.citations,
@@ -438,7 +435,6 @@ class StubLLM:
                     assignee_role="Operations Specialist",
                     team="operations",
                     title="Configure merchant and offers",
-                    priority="medium",
                     estimated_hours=16,
                     # Nothing in the SOW orders these two; the system did.
                     depends_on=[

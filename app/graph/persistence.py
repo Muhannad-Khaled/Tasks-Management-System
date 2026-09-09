@@ -370,7 +370,6 @@ def persist_extraction(
             team=team,
             assignee_role=role.title,
             requirement_id=requirement.id if requirement is not None else None,
-            priority=str(extracted.priority),
             estimated_hours=extracted.estimated_hours,
             estimate_source="estimated" if extracted.estimated_hours else "assumed",
             source_status=str(extracted.source_status),

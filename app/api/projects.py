@@ -92,7 +92,6 @@ class TaskView(BaseModel):
     title: str
     description: str
     team: str
-    priority: str
     status: str
     assignee_role: str
     source_status: str
@@ -198,7 +197,6 @@ def _task_view(db: Session, task: ProjectTask) -> TaskView:
         title=task.title,
         description=task.description,
         team=task.team,
-        priority=task.priority,
         status=task.status,
         assignee_role=task.assignee_role,
         source_status=task.source_status,
@@ -932,7 +930,6 @@ class TaskEdit(BaseModel):
     title: str | None = None
     description: str | None = None
     team: str | None = None
-    priority: str | None = None
     estimated_hours: float | None = None
 
 

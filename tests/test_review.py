@@ -54,7 +54,6 @@ class RegeneratingStub(StubLLM):
                 team="technical",
                 title="Rewritten without the unsupported duration",
                 description="Scoped to what the SOW states.",
-                priority="high",
                 estimated_hours=24,
                 source_status="explicit",
                 source_chunk_keys=self.citations,

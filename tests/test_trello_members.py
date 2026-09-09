@@ -208,8 +208,7 @@ def test_the_card_is_created_with_the_member_on_it():
     adapter = TrelloAdapter(api_key="k", token="t")
     adapter.http = httpx.Client(base_url="https://api.trello.com/1", transport=httpx.MockTransport(respond))
     adapter.push_tasks(
-        "b1", [BoardTask(task_id="T1", title="Build", description="", team="technical",
-                  priority="medium", status="backlog", assignee_member_id="mem-1")]
+        "b1", [BoardTask(task_id="T1", title="Build", description="", team="technical", status="backlog", assignee_member_id="mem-1")]
     )
 
     assert sent and sent[0].get("idMembers") == "mem-1"
@@ -238,8 +237,7 @@ def test_a_card_with_no_linked_owner_leaves_members_alone():
         "b1",
         "c1",
         BoardTask(
-            task_id="T1", title="Build", description="", team="technical",
-            priority="medium", status="backlog",
+            task_id="T1", title="Build", description="", team="technical", status="backlog",
         ),
     )
 
@@ -276,13 +274,11 @@ def test_a_push_says_who_was_named_but_not_assigned(db):
 
     task = ProjectTask(id="T1", project_id="P1", title="Build", team="technical")
     linked = BoardTask(
-        task_id="T1", title="Build", description="", team="technical",
-        priority="medium", status="backlog",
+        task_id="T1", title="Build", description="", team="technical", status="backlog",
         assignee_name="Sara Nabil", assignee_member_id="mem-2",
     )
     unlinked = BoardTask(
-        task_id="T2", title="Ship", description="", team="technical",
-        priority="medium", status="backlog", assignee_name="Karim Tarek",
+        task_id="T2", title="Ship", description="", team="technical", status="backlog", assignee_name="Karim Tarek",
     )
     other = ProjectTask(id="T2", project_id="P1", title="Ship", team="technical")
 
@@ -299,8 +295,7 @@ def test_nobody_named_at_all_is_not_reported_as_unassignable(db):
 
     task = ProjectTask(id="T1", project_id="P1", title="Build", team="technical")
     card = BoardTask(
-        task_id="T1", title="Build", description="", team="technical",
-        priority="medium", status="backlog",
+        task_id="T1", title="Build", description="", team="technical", status="backlog",
     )
 
     assert _unassignable_owners([task], {"T1": card}) == []
@@ -349,8 +344,7 @@ def _pair(member_id: str = "", name: str = ""):
         id="T1", project_id="P1", title="Build", team="technical", external_ref="c1"
     )
     card = BoardTask(
-        task_id="T1", title="Build", description="", team="technical",
-        priority="medium", status="backlog",
+        task_id="T1", title="Build", description="", team="technical", status="backlog",
         assignee_name=name, assignee_member_id=member_id,
     )
     return task, {"T1": card}

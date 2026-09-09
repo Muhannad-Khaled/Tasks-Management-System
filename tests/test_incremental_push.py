@@ -319,11 +319,11 @@ def test_cards_are_created_where_drift_is_measured_from():
     adapter = TrelloAdapter.__new__(TrelloAdapter)
     for team in ("commercial", "technical", "operations"):
         task = BoardTask(
-            task_id="t", title="t", description="", team=team, priority="high", status="backlog"
+            task_id="t", title="t", description="", team=team, status="backlog"
         )
         assert adapter.expected_location(task) in LISTS
     unknown = BoardTask(
-        task_id="t", title="t", description="", team="marketing", priority="high", status="backlog"
+        task_id="t", title="t", description="", team="marketing", status="backlog"
     )
     assert adapter.expected_location(unknown) == "Backlog"
 

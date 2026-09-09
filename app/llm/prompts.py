@@ -42,7 +42,7 @@ Hard rules:
 
 SOW_EXTRACTION = Prompt(
     name="sow_extraction",
-    version="v8",
+    version="v9",
     system=_GROUNDING_RULES,
     template="""Extract a structured project plan from the SOW below.
 
@@ -70,7 +70,7 @@ Produce:
    states them. If the SOW gives no intermediate dates, return an empty list
    rather than inventing checkpoints.
 5. tasks: concrete units of work implementing those requirements. Give each a
-   stable id (T-001, T-002, ...), a team, a priority, the requirement_id it
+   stable id (T-001, T-002, ...), a team, the requirement_id it
    implements, any depends_on task ids, and the milestone it contributes to
    (named exactly as you listed it above, or empty if none).
    Every task needs estimated_hours: the person-hours the work itself takes,

@@ -10,7 +10,7 @@ from datetime import date
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.details import DetailCategory
-from app.schemas.enums import Priority, SourceStatus, Team
+from app.schemas.enums import SourceStatus, Team
 
 
 class Provenance(BaseModel):
@@ -108,7 +108,6 @@ class ExtractedTask(Provenance):
             "'QA Engineer'. Never a person's name."
         ),
     )
-    priority: Priority = Priority.MEDIUM
     # Required, not optional. Left optional the model simply omitted it for
     # nine tasks out of ten, and the scheduler quietly used one day for each —
     # producing a timeline that looked estimated and was not.

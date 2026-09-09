@@ -35,12 +35,6 @@ class SourceStatus(StrEnum):
     ASSUMED = "assumed"  # introduced by the system to fill a gap
 
 
-class Priority(StrEnum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
 class TaskStatus(StrEnum):
     BACKLOG = "backlog"
     TODO = "todo"

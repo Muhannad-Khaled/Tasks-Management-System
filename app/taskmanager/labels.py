@@ -19,9 +19,6 @@ LABEL_COLORS: dict[str, str] = {
     "TEAM-COMMERCIAL": "blue",
     "TEAM-TECHNICAL": "purple",
     "TEAM-OPERATIONS": "orange",
-    "PRIORITY-HIGH": "red",
-    "PRIORITY-MEDIUM": "yellow",
-    "PRIORITY-LOW": "lime",
     # Where the task came from.
     "FROM-SOW": "sky",
     "INFERRED": "sky",
