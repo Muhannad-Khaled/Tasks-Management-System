@@ -1,0 +1,612 @@
+<meta charset="utf-8">
+<title>SOW-to-Project Execution Platform — Board Report</title>
+
+<style>
+  @page {
+    size: A4;
+    margin: 20mm 18mm 18mm 18mm;
+  }
+
+  :root {
+    --ink:   #14181f;
+    --ink-2: #3f4753;
+    --ink-3: #737b88;
+    --rule:  #d5d9e0;
+    --rule-soft: #e8eaef;
+    --accent: #23408f;
+    --good:  #0f6b60;
+    --warn:  #96650b;
+    --bad:   #a32b42;
+    --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans:  "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --mono:  Consolas, "Cascadia Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 10.2pt;
+    line-height: 1.52;
+    color: var(--ink-2);
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  h1, h2, h3, h4 { color: var(--ink); margin: 0; }
+
+  /* ---------- cover ---------- */
+  .cover { page-break-after: always; padding-top: 6mm; }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 8pt;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 9mm;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 27pt;
+    line-height: 1.16;
+    letter-spacing: -0.01em;
+    margin-bottom: 5mm;
+  }
+  .standfirst {
+    font-size: 12pt;
+    line-height: 1.5;
+    color: var(--ink);
+    max-width: 135mm;
+    margin-bottom: 10mm;
+  }
+  .cover-rule { border: 0; border-top: 2px solid var(--accent); margin: 0 0 6mm; }
+
+  .meta { display: grid; grid-template-columns: 34mm 1fr; row-gap: 2.4mm; font-size: 9.4pt; }
+  .meta dt { color: var(--ink-3); font-family: var(--mono); font-size: 8pt; letter-spacing: 0.08em; text-transform: uppercase; padding-top: 0.6mm; }
+  .meta dd { margin: 0; color: var(--ink); }
+  .meta a { color: var(--accent); text-decoration: none; word-break: break-all; }
+
+  .cover-note {
+    margin-top: 12mm;
+    border-left: 2px solid var(--rule);
+    padding: 0 0 0 5mm;
+    font-size: 9.4pt;
+    color: var(--ink-3);
+    max-width: 130mm;
+  }
+
+  /* ---------- sections ---------- */
+  section { page-break-inside: auto; }
+  h2 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 16pt;
+    margin: 9mm 0 3.5mm;
+    padding-bottom: 2mm;
+    border-bottom: 1px solid var(--rule);
+    page-break-after: avoid;
+  }
+  h2 .n {
+    font-family: var(--mono);
+    font-size: 8.5pt;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    margin-right: 3mm;
+    vertical-align: 1.4mm;
+  }
+  h3 {
+    font-size: 10.4pt;
+    font-weight: 600;
+    margin: 5mm 0 1.6mm;
+    page-break-after: avoid;
+  }
+  p { margin: 0 0 3mm; }
+  p.lead { font-size: 11pt; color: var(--ink); line-height: 1.48; }
+  strong { color: var(--ink); font-weight: 600; }
+  em { font-style: italic; }
+  .mono { font-family: var(--mono); font-size: 0.9em; }
+
+  ul { margin: 0 0 3mm; padding-left: 5mm; }
+  li { margin-bottom: 1.6mm; }
+  li::marker { color: var(--ink-3); }
+
+  /* ---------- pull quote ---------- */
+  .pull {
+    font-family: var(--serif);
+    font-size: 13pt;
+    line-height: 1.34;
+    color: var(--ink);
+    border-left: 2.5px solid var(--accent);
+    padding: 1mm 0 1mm 5mm;
+    margin: 5mm 0;
+    page-break-inside: avoid;
+  }
+
+  /* ---------- tables ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.4pt;
+    margin: 3mm 0 4mm;
+    /* Let a long table flow across a page break, but never split a single row:
+       a cell cut in half reads as two unrelated fragments. */
+    page-break-inside: auto;
+  }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 7.6pt;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    border-bottom: 1px solid var(--rule);
+    padding: 0 4mm 1.6mm 0;
+  }
+  td {
+    padding: 1.8mm 4mm 1.8mm 0;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; white-space: nowrap; padding-right: 6mm; }
+  th.n { text-align: right; padding-right: 6mm; }
+  tr:last-child td { border-bottom: 0; }
+
+  /* ---------- metric strip ---------- */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4mm;
+    margin: 4mm 0 5mm;
+    page-break-inside: avoid;
+  }
+  .metric { border-top: 1.5px solid var(--accent); padding-top: 2mm; }
+  .metric .v {
+    font-family: var(--serif);
+    font-size: 20pt;
+    line-height: 1;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric .v small { font-size: 0.44em; color: var(--ink-3); }
+  .metric .k { font-size: 8pt; color: var(--ink-3); margin-top: 1.4mm; line-height: 1.3; }
+
+  /* ---------- stamps ---------- */
+  .stamps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; margin: 3mm 0 4mm; page-break-inside: avoid; }
+  .stamp { border: 1px solid var(--rule); padding: 3mm; }
+  .stamp .label {
+    font-family: var(--mono);
+    font-size: 7.4pt;
+    letter-spacing: 0.11em;
+    font-weight: 600;
+    display: inline-block;
+    border: 1px solid currentColor;
+    padding: 0.3mm 1.4mm;
+    margin-bottom: 2mm;
+  }
+  .stamp.e .label { color: var(--good); }
+  .stamp.i .label { color: var(--warn); }
+  .stamp.a .label { color: var(--bad); }
+  .stamp p { margin: 0; font-size: 9pt; line-height: 1.42; }
+  .stamp .then { display: block; margin-top: 1.6mm; color: var(--ink-3); font-size: 8.4pt; }
+
+  /* ---------- refusals ---------- */
+  .refusals { list-style: none; padding: 0; margin: 3mm 0 4mm; }
+  .refusals li {
+    padding: 2mm 0 2mm 6mm;
+    border-top: 1px solid var(--rule-soft);
+    position: relative;
+    page-break-inside: avoid;
+  }
+  .refusals li:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .refusals li::before {
+    content: "\2717";
+    position: absolute;
+    left: 0.5mm;
+    color: var(--bad);
+    font-size: 10pt;
+  }
+
+  /* ---------- callout ---------- */
+  .note {
+    border: 1px solid var(--rule);
+    border-left: 2.5px solid var(--warn);
+    padding: 3mm 4mm;
+    margin: 4mm 0;
+    font-size: 9.4pt;
+    page-break-inside: avoid;
+  }
+  .note h4 {
+    font-size: 8pt;
+    font-family: var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--warn);
+    margin-bottom: 1.6mm;
+  }
+  .note p:last-child { margin-bottom: 0; }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 7.4pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+    display: inline-block;
+    margin-right: 2mm;
+  }
+  .tag.now { color: var(--bad); }
+  .tag.next { color: var(--warn); }
+  .tag.later { color: var(--ink-3); }
+
+  footer {
+    margin-top: 10mm;
+    padding-top: 3mm;
+    border-top: 1px solid var(--rule);
+    font-size: 8.4pt;
+    color: var(--ink-3);
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  .break { page-break-before: always; }
+</style>
+
+<!-- ============================ COVER ============================ -->
+<div class="cover">
+  <div class="kicker">Board Report &middot; September 2026</div>
+  <h1>From a Statement of Work<br>to a plan you can sign</h1>
+  <hr class="cover-rule">
+  <p class="standfirst">
+    An internal platform that turns a signed client contract into a costed,
+    scheduled, staffed project plan &mdash; and proves, line by line, where every
+    part of it came from.
+  </p>
+
+  <dl class="meta">
+    <dt>Prepared for</dt><dd>Board of Directors</dd>
+    <dt>Subject</dt><dd>SOW-to-Project Execution Platform &mdash; status, evidence and recommendation</dd>
+    <dt>Stage</dt><dd>Working pilot, verified end to end on a live client contract</dd>
+    <dt>Repository</dt><dd><a href="https://github.com/Muhannad-Khaled/Tasks-Management-System">github.com/Muhannad-Khaled/Tasks-Management-System</a></dd>
+    <dt>Evidence</dt><dd>NileBank consumer loyalty programme &mdash; 7-page contract, processed end to end</dd>
+  </dl>
+
+  <div class="cover-note">
+    <p><strong>How to read this report.</strong> Section 4 contains the measured
+    results from a real client contract. Section 6 states the platform&rsquo;s known
+    limits without softening them &mdash; a system built to declare what it does not
+    know should be described the same way.</p>
+    <p style="margin-bottom:0">Two technical diagrams accompany this document: the
+    component architecture and the processing pipeline.</p>
+  </div>
+</div>
+
+<!-- ============================ 1 ============================ -->
+<section>
+  <h2><span class="n">01</span>Executive summary</h2>
+
+  <p class="lead">Every client engagement begins with the same manual step: someone
+  reads twenty pages of contract prose and rebuilds it by hand into tasks, dates,
+  owners and acceptance criteria. It costs days of senior time, it is done
+  differently by every project manager, and the link back to the contract is lost
+  the moment the plan is written.</p>
+
+  <p>This platform performs that step and keeps the link. It reads the signed
+  contract, produces a complete project plan, and attaches to every statement in
+  that plan a reference to the passage of the contract that produced it. Where the
+  contract is silent, it says so and raises the question with the client rather
+  than quietly filling the gap.</p>
+
+  <p>It has been run end to end on a live client contract. The results are in
+  section 4.</p>
+
+  <div class="pull">Drafting the plan is the easy part. Knowing which parts the
+  contract actually authorised is the product.</div>
+
+  <h3>What the board is being asked to note</h3>
+  <ul>
+    <li>The platform works and has produced a verified plan from a real contract.</li>
+    <li>Its distinguishing feature is not speed. It is that its output can be
+        audited against the contract months later, by anyone.</li>
+    <li>It is a pilot: one team, no access control, and AI capacity on a trial
+        allowance. Section 7 sets out what production readiness requires.</li>
+  </ul>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section>
+  <h2><span class="n">02</span>The problem, and why general AI does not solve it</h2>
+
+  <p>Any general-purpose AI tool will produce a polished project plan from any
+  contract in thirty seconds. It will also invent a go-live date, a pricing rate
+  and a named approver &mdash; in the same tone of voice as the parts it got right.
+  There is no way to tell them apart.</p>
+
+  <p>That is not a cosmetic problem. A plan whose origins cannot be checked is a
+  plan that cannot be signed off, invoiced against, or defended in a scope dispute.
+  The commercial risk is not that the system is slow; it is that it is confidently
+  wrong in a way nobody notices until delivery.</p>
+
+  <h3>Three costs the manual process carries today</h3>
+  <table>
+    <tr>
+      <td style="width:32mm"><strong>Senior time</strong></td>
+      <td>Days on every engagement, before a single hour of delivery work begins.</td>
+    </tr>
+    <tr>
+      <td><strong>Lost traceability</strong></td>
+      <td>Six weeks into delivery, nobody can answer which clause put a given task
+          on the board.</td>
+    </tr>
+    <tr>
+      <td><strong>Hidden assumptions</strong></td>
+      <td>The contract never named a launch date, so someone picked one &mdash; and it
+          entered the plan looking exactly like a fact.</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section>
+  <h2><span class="n">03</span>What the platform produces</h2>
+
+  <p>One contract goes in. What comes out is a working plan, published to the
+  delivery board the team already uses.</p>
+
+  <table>
+    <thead><tr><th style="width:44mm">Output</th><th>What it contains</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Task breakdown</strong></td>
+          <td>The work split across commercial, technical and operations, each task tied to the requirement it delivers.</td></tr>
+      <tr><td><strong>Schedule</strong></td>
+          <td>Sequenced by dependency, with the critical path identified and the float on every other task made explicit.</td></tr>
+      <tr><td><strong>Owners</strong></td>
+          <td>Every task assigned to the role that does it, and staffed from the people directory where a candidate exists.</td></tr>
+      <tr><td><strong>Acceptance criteria and tests</strong></td>
+          <td>What &ldquo;done&rdquo; means for each piece of work, using the measurable thresholds the contract actually stated.</td></tr>
+      <tr><td><strong>Register of assumptions</strong></td>
+          <td>Every working value supplied because the contract did not state one &mdash; recorded and visible, never presented as fact.</td></tr>
+      <tr><td><strong>Client questions</strong></td>
+          <td>The same gaps, turned into a list to send back before they become change requests.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>The distinction the platform is built around</h3>
+  <p>Every value in the plan is marked with how it came to exist. This single
+  distinction is what separates the output from a document that merely sounds
+  convincing.</p>
+
+  <div class="stamps">
+    <div class="stamp e">
+      <span class="label">STATED</span>
+      <p>The contract says it outright.</p>
+      <span class="then">Carries a reference to the exact passage.</span>
+    </div>
+    <div class="stamp i">
+      <span class="label">INFERRED</span>
+      <p>It follows from something the contract does state.</p>
+      <span class="then">Carries the passage it follows from.</span>
+    </div>
+    <div class="stamp a">
+      <span class="label">ASSUMED</span>
+      <p>The contract is silent; a working value was supplied so planning could continue.</p>
+      <span class="then">Becomes a recorded assumption and a client question.</span>
+    </div>
+  </div>
+
+  <h3>Verification is per statement, not per plan</h3>
+  <p>A task is not graded once and waved through. It is broken into the individual
+  assertions it makes &mdash; <em>this takes fifteen hours</em>, <em>this is the account
+  manager&rsquo;s responsibility</em>, <em>this cannot start before signature</em> &mdash; and each
+  is checked against the contract on its own. A task can be entirely right about
+  the work and quietly wrong about the duration; a single overall score hides
+  exactly the detail a project manager needs to catch.</p>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="break">
+  <h2><span class="n">04</span>Evidence: one contract, end to end</h2>
+
+  <p>The figures below are the recorded output of a single run against the NileBank
+  consumer loyalty contract &mdash; a seven-page document of 2,188 words. They are read
+  directly from the platform&rsquo;s database, not estimated.</p>
+
+  <div class="metrics">
+    <div class="metric"><div class="v">11</div><div class="k">tasks scheduled</div></div>
+    <div class="metric"><div class="v">812</div><div class="k">hours estimated</div></div>
+    <div class="metric"><div class="v">100<small>%</small></div><div class="k">statements verified</div></div>
+    <div class="metric"><div class="v">9</div><div class="k">client questions raised</div></div>
+  </div>
+
+  <table>
+    <thead><tr><th>Produced</th><th class="n">Count</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Requirements identified</td><td class="n">15</td><td>each referenced to the contract section that states it</td></tr>
+      <tr><td>Tasks, scheduled and sequenced</td><td class="n">11</td><td>across commercial (2), technical (5) and operations (4)</td></tr>
+      <tr><td>Roles defined</td><td class="n">11</td><td>work assigned by role; the directory fills names where it can</td></tr>
+      <tr><td>User stories</td><td class="n">20</td><td>15 written for the client, 5 written for the engineer doing the work</td></tr>
+      <tr><td>Acceptance criteria</td><td class="n">43</td><td>8 carry a measured threshold taken from the contract</td></tr>
+      <tr><td>Test cases</td><td class="n">22</td><td>2 flagged because they rest on an assumed value</td></tr>
+      <tr><td>Assumptions &rarr; client questions</td><td class="n">9 &rarr; 9</td><td>raised before delivery rather than discovered during it</td></tr>
+      <tr><td>Statements checked against the contract</td><td class="n">35</td><td>every one supported by cited text</td></tr>
+    </tbody>
+  </table>
+
+  <h3>What was checked, and how</h3>
+  <p>The 35 statements were extracted from the eleven tasks and each judged against
+  the passage it cites. A sample, verbatim from the record:</p>
+
+  <table>
+    <thead><tr><th>Statement</th><th style="width:38mm">Contract says</th></tr></thead>
+    <tbody>
+      <tr><td>Accrual rate is 2 points per 10 EGP</td><td>&ldquo;2 points for every 10&nbsp;EGP of qualifying spend&rdquo;</td></tr>
+      <tr><td>Hypercare support is provided for 30 days</td><td>&ldquo;hypercare support for 30 calendar days&rdquo;</td></tr>
+      <tr><td>Pilot runs across 5 branches for one week</td><td>&ldquo;5 nominated branches for a period of one week&rdquo;</td></tr>
+      <tr><td>Authentication uses OAuth 2.0 with mTLS</td><td>stated in the technical requirements</td></tr>
+    </tbody>
+  </table>
+
+  <p>No statement cited a passage that does not exist, and none was marked
+  supported without a citation. Both are checked mechanically, because a
+  fabricated reference would otherwise be indistinguishable from a real one.</p>
+
+  <div class="note">
+    <h4>On a perfect score</h4>
+    <p>A previous run of the same contract scored 90%, and its weakest task scored
+    33% &mdash; it had conflated two separate deliverables and asserted a figure the
+    contract applies to something else. That task went to the board carrying a
+    <span class="mono">GROUNDING-FAILED</span> label, and the project manager
+    approved it knowing that. The check is not decorative: it has caught real
+    errors, and the platform does not hide them.</p>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section>
+  <h2><span class="n">05</span>Control, and what the platform refuses to do</h2>
+
+  <p class="lead">The platform never publishes on its own. It prepares the plan,
+  puts every assumption, weak task and unanswered question in front of the project
+  manager, and waits for a named approval.</p>
+
+  <p>Before approval, the manager can edit any task, regenerate a weak one, answer
+  a client question, or reject the plan outright; every action is recorded. After
+  approval, cards are updated rather than duplicated, and if someone changes or
+  deletes a card downstream the manager is told the plan and the board have
+  diverged.</p>
+
+  <h3>The refusals</h3>
+  <ul class="refusals">
+    <li><strong>It refuses a document it cannot genuinely read.</strong> A scanned
+        contract stops the process rather than yielding an empty plan that looks complete.</li>
+    <li><strong>It refuses to report success on an empty result.</strong> If nothing
+        was extracted, it retries once and then reports failure.</li>
+    <li><strong>It refuses to state a figure it cannot source.</strong> An
+        unsupported number in an acceptance criterion is dropped, not saved.</li>
+    <li><strong>It refuses to invent people.</strong> Work is assigned to roles;
+        names come only from a real directory.</li>
+    <li><strong>It refuses to fill a silence.</strong> Where the contract specifies
+        nothing, the card says so in plain words.</li>
+  </ul>
+
+  <div class="pull">The refusals are the product. Anything can generate a plan; the
+  commercial value is in a system that knows the boundary of what it was told.</div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="break">
+  <h2><span class="n">06</span>Assurance and known limits</h2>
+
+  <div class="metrics">
+    <div class="metric"><div class="v">502</div><div class="k">automated tests</div></div>
+    <div class="metric"><div class="v">9</div><div class="k">independent checks per plan</div></div>
+    <div class="metric"><div class="v">39</div><div class="k">planning gaps audited</div></div>
+    <div class="metric"><div class="v">100<small>%</small></div><div class="k">AI activity logged</div></div>
+  </div>
+
+  <p>Every request made to the AI, and the answer it gave, is stored against the
+  project it served, so any output produced months ago can be traced to the
+  instruction behind it. The scheduling, the validation and the audit trail are
+  ordinary software: the AI is never asked to mark its own work. The full test
+  suite runs in under three minutes without network access.</p>
+
+  <h3>Limits, stated plainly</h3>
+  <table>
+    <tbody>
+      <tr>
+        <td style="width:44mm"><strong>Roles, not named people</strong></td>
+        <td>Work is assigned to a role, not an individual. There is no HR
+            integration, and inventing staff names is the exact failure this platform
+            exists to prevent. The project manager still makes the final allocation.</td>
+      </tr>
+      <tr>
+        <td><strong>Coverage of the document is not yet verified</strong></td>
+        <td>The platform proves that everything it produced traces back to the
+            contract. It does not yet prove the reverse &mdash; that everything in the
+            contract was picked up. On the test contract, 62% of passages are
+            referenced by something in the plan. The gap is measurable, and closing
+            it is the first item in section 7.</td>
+      </tr>
+      <tr>
+        <td><strong>Output varies between runs</strong></td>
+        <td>The same contract produced 5 requirements on one run and 15 on another.
+            Both were verified against the document, but the shape of the plan is not
+            yet stable. The cause is known: the platform never defines what one
+            requirement is, so the model decides each time.</td>
+      </tr>
+      <tr>
+        <td><strong>The delivery board is the weak link</strong></td>
+        <td>The full plan lives in our own system; the board carries a summary. If
+            structured tracking inside the board becomes a requirement, that is the
+            piece to reconsider.</td>
+      </tr>
+      <tr>
+        <td><strong>Built for a pilot, not a fleet</strong></td>
+        <td>One team, no access control, and AI capacity on a trial allowance of
+            twenty requests per day. All three are known work items before wider use.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section>
+  <h2><span class="n">07</span>Recommendation</h2>
+
+  <p>The platform is ready to be used on live engagements under project-manager
+  supervision, which is how it is designed to be used. Moving it beyond a single
+  team requires the following, in order.</p>
+
+  <table>
+    <tbody>
+      <tr>
+        <td style="width:44mm"><span class="tag now">Immediate</span><strong>Prove document coverage</strong></td>
+        <td>Report every passage of the contract that produced nothing, so an
+            unexamined section and an examined one cannot look identical. The
+            measurement already exists; it needs to become a check the manager sees
+            before approving.</td>
+      </tr>
+      <tr>
+        <td><span class="tag now">Immediate</span><strong>Process long contracts in the background</strong></td>
+        <td>A large document currently holds up the upload, which has caused
+            duplicated work. Moving it to a background job with live progress removes both.</td>
+      </tr>
+      <tr>
+        <td><span class="tag next">Near term</span><strong>Stabilise the shape of the plan</strong></td>
+        <td>Anchor a requirement to the contract&rsquo;s own clause structure so the
+            count becomes a property of the document rather than of the run.</td>
+      </tr>
+      <tr>
+        <td><span class="tag next">Near term</span><strong>Decline out-of-scope contracts loudly</strong></td>
+        <td>A contract outside our service lines should be refused outright, not
+            quietly turned into a plausible-looking plan.</td>
+      </tr>
+      <tr>
+        <td><span class="tag later">Investment</span><strong>Commercial AI capacity</strong></td>
+        <td>Removes the trial ceiling, cuts processing time substantially, and
+            avoids being locked to a single supplier. Much of the engineering
+            described above exists to work within twenty requests per day.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="pull">The value is not that it writes the plan. It is that it knows
+  the difference between what the contract said and what it assumed &mdash; and tells
+  you which is which.</div>
+
+  <p>Every competitor can produce a project plan from a document. What a client is
+  buying here is the ability to open any task on the board, six months into
+  delivery, and read the clause that authorised it.</p>
+
+  <footer>
+    SOW-to-Project Execution Platform &middot; Board Report &middot; September 2026<br>
+    Source code and full history:
+    <a href="https://github.com/Muhannad-Khaled/Tasks-Management-System">github.com/Muhannad-Khaled/Tasks-Management-System</a><br>
+    Figures in section 4 are read from the platform&rsquo;s own records for the
+    NileBank engagement and can be reproduced from the repository.
+  </footer>
+</section>
