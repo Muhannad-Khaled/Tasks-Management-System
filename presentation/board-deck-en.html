@@ -1,0 +1,736 @@
+<title>SOW-to-Project Execution Platform — Board Review</title>
+
+<style>
+  :root {
+    --paper:      #FBFBFD;
+    --paper-2:    #F2F3F7;
+    --ink:        #111823;
+    --ink-2:      #3D4658;
+    --ink-3:      #737C90;
+    --rule:       #D8DBE4;
+    --rule-soft:  #E7E9EF;
+    --accent:     #2B3FA8;
+    --accent-dim: #6B78C9;
+    --explicit:   #0F766E;
+    --inferred:   #A16207;
+    --assumed:    #B4304A;
+
+    --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, "SF Mono", monospace;
+
+    --pad: clamp(1.75rem, 5vw, 6rem);
+    --measure: 62ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:     #0D1017;
+      --paper-2:   #161B26;
+      --ink:       #E8EBF2;
+      --ink-2:     #AEB6C6;
+      --ink-3:     #7B8496;
+      --rule:      #2A313F;
+      --rule-soft: #1E242F;
+      --accent:    #93A2F5;
+      --accent-dim:#5B68B8;
+      --explicit:  #4DBFAE;
+      --inferred:  #D9A341;
+      --assumed:   #E8798F;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:     #0D1017;
+    --paper-2:   #161B26;
+    --ink:       #E8EBF2;
+    --ink-2:     #AEB6C6;
+    --ink-3:     #7B8496;
+    --rule:      #2A313F;
+    --rule-soft: #1E242F;
+    --accent:    #93A2F5;
+    --accent-dim:#5B68B8;
+    --explicit:  #4DBFAE;
+    --inferred:  #D9A341;
+    --assumed:   #E8798F;
+  }
+
+  :root[data-theme="light"] {
+    --paper:     #FBFBFD;
+    --paper-2:   #F2F3F7;
+    --ink:       #111823;
+    --ink-2:     #3D4658;
+    --ink-3:     #737C90;
+    --rule:      #D8DBE4;
+    --rule-soft: #E7E9EF;
+    --accent:    #2B3FA8;
+    --accent-dim:#6B78C9;
+    --explicit:  #0F766E;
+    --inferred:  #A16207;
+    --assumed:   #B4304A;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: clamp(0.95rem, 0.55vw + 0.82rem, 1.08rem);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .deck {
+    scroll-snap-type: y proximity;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .deck { scroll-behavior: auto; }
+    * { animation: none !important; transition: none !important; }
+  }
+
+  .slide {
+    position: relative;
+    min-height: 100svh;
+    scroll-snap-align: start;
+    padding: clamp(3.5rem, 8vh, 6rem) var(--pad) clamp(3rem, 7vh, 5rem);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-bottom: 1px solid var(--rule-soft);
+    overflow-x: hidden;
+  }
+
+  .slide > * { max-width: 1180px; width: 100%; margin-inline: auto; }
+
+  /* ---- the citation key motif: every slide carries its own coordinates ---- */
+  .key {
+    position: absolute;
+    top: clamp(1.4rem, 3.5vh, 2.4rem);
+    right: var(--pad);
+    left: auto;
+    max-width: none;
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    user-select: none;
+  }
+  .key b { color: var(--accent); font-weight: 600; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 auto 1.4rem;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+  }
+  .eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(2.4rem, 6.2vw, 5.1rem);
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0 auto 1.6rem;
+  }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(1.85rem, 4vw, 3.15rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 auto 1.5rem;
+  }
+
+  h3 {
+    font-size: 0.78rem;
+    font-family: var(--mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    margin: 0 auto 0.7rem;
+  }
+
+  p { margin: 0 auto 1.1rem; max-width: var(--measure); color: var(--ink-2); }
+  p.lead {
+    font-size: clamp(1.1rem, 1.5vw, 1.4rem);
+    line-height: 1.5;
+    color: var(--ink);
+    max-width: 56ch;
+  }
+  strong { color: var(--ink); font-weight: 600; }
+  em { font-style: normal; color: var(--accent); }
+
+  code, .mono {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    color: var(--accent);
+    letter-spacing: 0.01em;
+  }
+
+  /* ---- pull quote: the thesis device ---- */
+  .thesis {
+    font-family: var(--display);
+    font-size: clamp(1.5rem, 3.1vw, 2.5rem);
+    line-height: 1.24;
+    color: var(--ink);
+    max-width: 26ch;
+    margin: 0 auto;
+    padding-left: 1.4rem;
+    border-left: 2px solid var(--accent);
+    text-wrap: balance;
+  }
+
+  /* ---- numbered pipeline ---- */
+  .steps { display: grid; gap: 0; margin: 1.5rem auto 0; }
+  .step {
+    display: grid;
+    grid-template-columns: 3.2rem minmax(0, 15rem) minmax(0, 1fr);
+    gap: clamp(0.8rem, 2vw, 2rem);
+    align-items: baseline;
+    padding: 0.95rem 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .step:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .step .n {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
+  }
+  .step .t { font-weight: 600; color: var(--ink); font-size: 1.02rem; }
+  .step .d { color: var(--ink-2); font-size: 0.94rem; }
+  .step .d span.noai {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.07em;
+    color: var(--explicit);
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    padding: 0.05rem 0.35rem;
+    margin-left: 0.5rem;
+    white-space: nowrap;
+  }
+  @media (max-width: 720px) {
+    .step { grid-template-columns: 2.4rem 1fr; }
+    .step .d { grid-column: 2; }
+  }
+
+  /* ---- provenance stamps ---- */
+  .stamps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule-soft); margin-top: 1.5rem; }
+  .stamp { background: var(--paper); padding: 1.4rem 1.3rem; }
+  .stamp .label {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    margin-bottom: 0.85rem;
+  }
+  .stamp.e .label { color: var(--explicit); }
+  .stamp.i .label { color: var(--inferred); }
+  .stamp.a .label { color: var(--assumed); }
+  .stamp p { margin: 0; font-size: 0.94rem; max-width: none; }
+  .stamp .then { display: block; margin-top: 0.7rem; font-size: 0.86rem; color: var(--ink-3); }
+
+  /* ---- metric row ---- */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: clamp(1rem, 3vw, 2.5rem) 1rem; margin-top: 2rem; }
+  .metric .v {
+    font-family: var(--display);
+    font-size: clamp(2.1rem, 4.4vw, 3.4rem);
+    line-height: 1;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .metric .v small { font-size: 0.42em; color: var(--ink-3); letter-spacing: 0; }
+  .metric .k {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-top: 0.5rem;
+  }
+
+  /* ---- two-column body ---- */
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: clamp(1.4rem, 4vw, 3.5rem); margin-top: 1.4rem; }
+  .cols > div > p { max-width: none; }
+
+  /* ---- refusal list ---- */
+  .refusals { list-style: none; padding: 0; margin: 1.4rem auto 0; }
+  .refusals li {
+    padding: 0.85rem 0 0.85rem 2.2rem;
+    border-top: 1px solid var(--rule-soft);
+    position: relative;
+    color: var(--ink-2);
+  }
+  .refusals li:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .refusals li::before {
+    content: "\00D7";
+    position: absolute;
+    left: 0.35rem;
+    top: 0.75rem;
+    color: var(--assumed);
+    font-size: 1.15rem;
+    line-height: 1;
+  }
+  .refusals li b { color: var(--ink); font-weight: 600; }
+
+  /* ---- data table ---- */
+  .scroll { overflow-x: auto; margin-top: 1.4rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 0.94rem; }
+  th, td { text-align: left; padding: 0.62rem 1rem 0.62rem 0; border-bottom: 1px solid var(--rule-soft); }
+  th {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    border-bottom-color: var(--rule);
+  }
+  td { color: var(--ink-2); }
+  td.num { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; text-align: right; padding-right: 1.6rem; }
+  td b { color: var(--ink); }
+
+  /* ---- tech grid ---- */
+  .tech { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule-soft); margin-top: 1.5rem; }
+  .tech div { background: var(--paper); padding: 1.05rem 1.1rem; }
+  .tech .n { font-family: var(--mono); font-size: 0.82rem; color: var(--accent); font-weight: 600; }
+  .tech .w { font-size: 0.88rem; color: var(--ink-2); margin-top: 0.3rem; line-height: 1.45; }
+
+  /* ---- tradeoff / roadmap rows ---- */
+  .rows { margin-top: 1.4rem; }
+  .row {
+    display: grid;
+    grid-template-columns: minmax(0, 17rem) minmax(0, 1fr);
+    gap: clamp(0.6rem, 2.5vw, 2.5rem);
+    padding: 1rem 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .row:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .row .h { font-weight: 600; color: var(--ink); }
+  .row .b { color: var(--ink-2); font-size: 0.95rem; }
+  .row .h .tag {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+  .tag.now { color: var(--assumed); }
+  .tag.next { color: var(--inferred); }
+  .tag.later { color: var(--ink-3); }
+  @media (max-width: 720px) { .row { grid-template-columns: 1fr; gap: 0.35rem; } }
+
+  /* ---- flow diagram ---- */
+  .flow { margin-top: 1.6rem; overflow-x: auto; }
+  .flow svg { display: block; min-width: 620px; width: 100%; height: auto; }
+
+  /* ---- progress rail ---- */
+  .rail {
+    position: fixed;
+    right: clamp(0.7rem, 1.6vw, 1.5rem);
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    z-index: 20;
+  }
+  .rail a {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--rule);
+    display: block;
+    transition: background 0.2s, transform 0.2s;
+  }
+  .rail a:hover { background: var(--accent-dim); transform: scale(1.4); }
+  .rail a[aria-current="true"] { background: var(--accent); transform: scale(1.5); }
+  .rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @media (max-width: 640px) { .rail { display: none; } }
+
+  .counter {
+    position: fixed;
+    bottom: clamp(0.8rem, 2vh, 1.6rem);
+    right: var(--pad);
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .hint {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    color: var(--ink-3);
+    margin-top: 3rem;
+  }
+
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+</style>
+
+<nav class="rail" aria-label="Slides">
+  <a href="#s1" aria-label="Slide 1"></a><a href="#s2" aria-label="Slide 2"></a><a href="#s3" aria-label="Slide 3"></a>
+  <a href="#s4" aria-label="Slide 4"></a><a href="#s5" aria-label="Slide 5"></a><a href="#s6" aria-label="Slide 6"></a>
+  <a href="#s7" aria-label="Slide 7"></a><a href="#s8" aria-label="Slide 8"></a><a href="#s9" aria-label="Slide 9"></a>
+  <a href="#s10" aria-label="Slide 10"></a><a href="#s11" aria-label="Slide 11"></a><a href="#s12" aria-label="Slide 12"></a>
+  <a href="#s13" aria-label="Slide 13"></a><a href="#s14" aria-label="Slide 14"></a>
+</nav>
+<div class="counter" id="counter">01 / 14</div>
+
+<main class="deck">
+
+  <!-- 1 -->
+  <section class="slide" id="s1">
+    <div class="key">01 &middot; OVERVIEW</div>
+    <div>
+      <div class="eyebrow">Board Review &middot; September 2026</div>
+      <h1>From a Statement&nbsp;of&nbsp;Work<br>to a plan you can sign.</h1>
+      <p class="lead">A platform that turns a signed contract into a costed, scheduled, staffed project plan &mdash; and proves, line by line, where every part of it came from.</p>
+      <p class="hint">Use &larr; &rarr; or scroll &middot; 14 slides</p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide" id="s2">
+    <div class="key">02 &middot; THE PROBLEM</div>
+    <div>
+      <h3>The problem</h3>
+      <h2>A signed contract is not a plan.</h2>
+      <p class="lead">Someone still has to read twenty pages of contract prose and rebuild it, by hand, into tasks, dates, owners and acceptance criteria. That takes days of senior time, and every project manager does it differently.</p>
+      <div class="cols">
+        <div>
+          <h3>What it costs</h3>
+          <p>Days of expensive time on every engagement, before a single hour of delivery work begins.</p>
+        </div>
+        <div>
+          <h3>What gets lost</h3>
+          <p>The link back to the contract. Six weeks in, nobody can answer <em>&ldquo;which clause put this on the board?&rdquo;</em></p>
+        </div>
+        <div>
+          <h3>What gets hidden</h3>
+          <p>The gaps. The contract never named a launch date, so someone picked one &mdash; and it entered the plan looking exactly like a fact.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide" id="s3">
+    <div class="key">03 &middot; WHY THIS IS HARD</div>
+    <div>
+      <h3>Why &ldquo;just use AI&rdquo; is not the answer</h3>
+      <h2>The confident wrong answer is the expensive one.</h2>
+      <p class="lead">Any general-purpose AI will produce a polished project plan from any contract in thirty seconds. It will also invent a go-live date, a pricing rate and a named approver &mdash; in the same tone of voice as the parts it got right.</p>
+      <p>There is no way to tell them apart. And a plan whose origins cannot be checked is a plan that cannot be signed off, invoiced against, or defended in a scope dispute.</p>
+      <div style="margin-top:2.2rem">
+        <div class="thesis">Drafting the plan is the easy part. Knowing which parts the contract actually authorised is the product.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide" id="s4">
+    <div class="key">04 &middot; THE THESIS</div>
+    <div>
+      <h3>The thesis</h3>
+      <h2>Every line traces back to the contract.</h2>
+      <p class="lead">The document is broken into referenceable passages the moment it arrives. From that point on, every statement the platform produces carries a pointer to the passage that produced it &mdash; all the way to the card on the delivery board.</p>
+      <div class="flow" role="img" aria-label="The traceability chain: contract clause to requirement to task to acceptance criterion to board card">
+        <svg viewBox="0 0 700 94" xmlns="http://www.w3.org/2000/svg">
+          <text x="14" y="32" font-family="Segoe UI, sans-serif" font-size="15" fill="var(--ink)">Contract clause</text>
+          <text x="134" y="32" font-family="monospace" font-size="15" fill="var(--accent)">&#8594;</text>
+          <text x="162" y="32" font-family="Segoe UI, sans-serif" font-size="15" fill="var(--ink-2)">Requirement</text>
+          <text x="268" y="32" font-family="monospace" font-size="15" fill="var(--accent)">&#8594;</text>
+          <text x="296" y="32" font-family="Segoe UI, sans-serif" font-size="15" fill="var(--ink-2)">Task</text>
+          <text x="348" y="32" font-family="monospace" font-size="15" fill="var(--accent)">&#8594;</text>
+          <text x="376" y="32" font-family="Segoe UI, sans-serif" font-size="15" fill="var(--ink-2)">Acceptance criterion</text>
+          <text x="538" y="32" font-family="monospace" font-size="15" fill="var(--accent)">&#8594;</text>
+          <text x="566" y="32" font-family="Segoe UI, sans-serif" font-size="15" font-weight="600" fill="var(--ink)">Board card</text>
+          <line x1="14" y1="58" x2="686" y2="58" stroke="var(--rule-soft)" stroke-width="1"/>
+          <text x="14" y="84" font-family="Segoe UI, sans-serif" font-size="13.5" fill="var(--ink-3)">Open any card six months into delivery and read the clause that authorised it.</text>
+        </svg>
+      </div>
+      <p style="margin-top:1.6rem">And where the contract is silent, the platform says so. <strong>It does not close the gap on the client&rsquo;s behalf.</strong></p>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide" id="s5">
+    <div class="key">05 &middot; THE OUTPUT</div>
+    <div>
+      <h3>What comes out</h3>
+      <h2>One contract in. A working plan out.</h2>
+      <div class="steps">
+        <div class="step"><div class="n">01</div><div class="t">A task breakdown</div><div class="d">The work split across commercial, technical and operations, each task tied to the requirement it delivers.</div></div>
+        <div class="step"><div class="n">02</div><div class="t">A schedule</div><div class="d">Sequenced by dependency, with the critical path identified and the float on everything else made explicit.</div></div>
+        <div class="step"><div class="n">03</div><div class="t">Owners</div><div class="d">Every task assigned to the role that does it, and staffed from the people directory where a candidate exists.</div></div>
+        <div class="step"><div class="n">04</div><div class="t">Acceptance criteria and tests</div><div class="d">What &ldquo;done&rdquo; means for each piece of work, with the measurable thresholds the contract actually stated.</div></div>
+        <div class="step"><div class="n">05</div><div class="t">A register of assumptions</div><div class="d">Every working value we supplied because the contract did not, recorded and visible.</div></div>
+        <div class="step"><div class="n">06</div><div class="t">Questions for the client</div><div class="d">The same gaps, turned into a list to send back before they become change requests.</div></div>
+      </div>
+      <p style="margin-top:1.6rem">All of it published to the delivery board the team already uses.</p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide" id="s6">
+    <div class="key">06 &middot; KNOWN VS ASSUMED</div>
+    <div>
+      <h3>The distinction that matters</h3>
+      <h2>What the contract said, and what we assumed.</h2>
+      <p class="lead">Every value in the plan is marked with how it came to exist. This single distinction is what separates the platform from a document that merely sounds convincing.</p>
+      <div class="stamps">
+        <div class="stamp e">
+          <span class="label">STATED</span>
+          <p>The contract says it outright.</p>
+          <span class="then">Carries a reference to the exact passage.</span>
+        </div>
+        <div class="stamp i">
+          <span class="label">INFERRED</span>
+          <p>It follows from something the contract does state.</p>
+          <span class="then">Carries the passage it follows from.</span>
+        </div>
+        <div class="stamp a">
+          <span class="label">ASSUMED</span>
+          <p>The contract is silent. We supplied a working value so planning could continue.</p>
+          <span class="then">Becomes a recorded assumption <em>and</em> a question for the client.</span>
+        </div>
+      </div>
+      <p style="margin-top:1.7rem">On the NileBank contract that produced <strong>9 recorded assumptions and 9 client questions</strong> &mdash; each one a commercial conversation worth having before delivery starts, rather than after.</p>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide" id="s7">
+    <div class="key">07 &middot; VERIFICATION</div>
+    <div>
+      <h3>Verification</h3>
+      <h2>We check every statement, not the plan as a whole.</h2>
+      <p class="lead">A task is not graded once and waved through. It is broken into the individual assertions it makes &mdash; <em>this takes fifteen hours</em>, <em>this is the account manager&rsquo;s responsibility</em>, <em>this cannot start before signature</em> &mdash; and each is checked against the contract on its own.</p>
+      <p>The reason is simple: a task can be entirely right about the work and quietly wrong about the duration. A single overall score hides exactly the detail a project manager needs to catch.</p>
+      <div style="margin-top:2rem">
+        <div class="thesis" style="max-width:34ch">A statement the contract does not support is flagged, not smoothed over.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide" id="s8">
+    <div class="key">08 &middot; ACCOUNTABILITY</div>
+    <div>
+      <h3>The control</h3>
+      <h2>Nothing reaches the team without a named approval.</h2>
+      <p class="lead">The platform never publishes on its own. It prepares the plan, puts every assumption, weak task and unanswered question in front of the project manager, and waits.</p>
+      <div class="cols">
+        <div>
+          <h3>Before approval</h3>
+          <p>The manager can edit any task, regenerate a weak one, answer a client question, or reject the plan outright. Every action is recorded.</p>
+        </div>
+        <div>
+          <h3>After approval</h3>
+          <p>Cards are updated rather than duplicated. And if someone changes or deletes a card downstream, the manager is told the plan and the board have diverged.</p>
+        </div>
+        <div>
+          <h3>Accountability</h3>
+          <p>A person signs off. The platform&rsquo;s job is to make sure that person can see exactly what they are signing.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide" id="s9">
+    <div class="key">09 &middot; EVIDENCE</div>
+    <div>
+      <h3>Live result &middot; NileBank loyalty programme</h3>
+      <h2>One contract, end to end.</h2>
+      <div class="metrics">
+        <div class="metric"><div class="v">12</div><div class="k">tasks scheduled</div></div>
+        <div class="metric"><div class="v">1,138</div><div class="k">hours estimated</div></div>
+        <div class="metric"><div class="v">90<small>%</small></div><div class="k">statements verified</div></div>
+        <div class="metric"><div class="v">9</div><div class="k">questions raised</div></div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Produced</th><th style="text-align:right;padding-right:1.6rem">Count</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Requirements identified</td><td class="num">5</td><td>each referenced to the contract section that states it</td></tr>
+            <tr><td>Tasks, scheduled and sequenced</td><td class="num">12</td><td>across commercial, technical and operations</td></tr>
+            <tr><td>Roles defined / staffed</td><td class="num">11 / 7</td><td>four roles have no candidate in the directory yet</td></tr>
+            <tr><td>Acceptance criteria</td><td class="num">21</td><td>thresholds rejected unless the contract stated them</td></tr>
+            <tr><td>Test cases</td><td class="num">9</td><td>flagged where they rest on an assumed value</td></tr>
+            <tr><td>Assumptions &rarr; client questions</td><td class="num">9 &rarr; 9</td><td>raised before delivery, not discovered during it</td></tr>
+            <tr><td>Cards published to the board</td><td class="num">12</td><td>after project-manager approval</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:1.4rem;font-size:0.9rem;color:var(--ink-3)">The weakest task scored 33% and was flagged for review rather than quietly shipped. That is the intended behaviour, not a defect.</p>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section class="slide" id="s10">
+    <div class="key">10 &middot; THE DIFFERENTIATOR</div>
+    <div>
+      <h3>The differentiator</h3>
+      <h2>What the platform refuses to do.</h2>
+      <ul class="refusals">
+        <li><b>It refuses a document it cannot genuinely read.</b> A scanned contract stops the process rather than yielding an empty plan that looks complete.</li>
+        <li><b>It refuses to report success on an empty result.</b> If nothing was extracted, it retries once and then reports failure.</li>
+        <li><b>It refuses to state a figure it cannot source.</b> An unsupported number in an acceptance criterion is dropped, not saved.</li>
+        <li><b>It refuses to invent people.</b> Work is assigned to roles; names come only from a real directory.</li>
+        <li><b>It refuses to fill a silence.</b> Where the contract specifies nothing, the card says so in plain words.</li>
+      </ul>
+      <p style="margin-top:2rem"><strong>The refusals are the product.</strong> Anything can generate a plan. The commercial value is in a system that knows the boundary of what it was told &mdash; and stops there.</p>
+    </div>
+  </section>
+
+  <!-- 11 -->
+  <section class="slide" id="s11">
+    <div class="key">11 &middot; ASSURANCE</div>
+    <div>
+      <h3>How we know it works</h3>
+      <h2>Auditable by construction.</h2>
+      <div class="metrics">
+        <div class="metric"><div class="v">502</div><div class="k">automated tests</div></div>
+        <div class="metric"><div class="v">9</div><div class="k">independent checks per plan</div></div>
+        <div class="metric"><div class="v">39</div><div class="k">planning gaps audited</div></div>
+        <div class="metric"><div class="v">100<small>%</small></div><div class="k">AI activity logged</div></div>
+      </div>
+      <div class="cols" style="margin-top:2.4rem">
+        <div>
+          <h3>Everything is recorded</h3>
+          <p>Every request made to the AI, and the answer it gave, is stored against the project it served. Any output produced months ago can be traced to the instruction behind it.</p>
+        </div>
+        <div>
+          <h3>The checks are not AI</h3>
+          <p>The scheduling, the validation and the audit trail are ordinary software. The AI is never asked to mark its own work.</p>
+        </div>
+        <div>
+          <h3>Nothing fails quietly</h3>
+          <p>A failure is reported as a failure. The system is built on the principle that a wrong result is more dangerous than no result.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12 -->
+  <section class="slide" id="s12">
+    <div class="key">12 &middot; LIMITS</div>
+    <div>
+      <h3>Where we are honest</h3>
+      <h2>Known limits and deliberate trade-offs.</h2>
+      <div class="rows">
+        <div class="row"><div class="h">Roles, not named people</div><div class="b">Work is assigned to a role, not an individual. There is no HR integration, and inventing staff names is the exact failure this platform exists to prevent. The project manager still makes the final allocation.</div></div>
+        <div class="row"><div class="h">The board tool is the weak link</div><div class="b">The full plan lives in our own system; the delivery board carries a summary of it. If structured tracking inside the board becomes a requirement, that is the piece to reconsider.</div></div>
+        <div class="row"><div class="h">One field is not yet held to the standard</div><div class="b">Task priority is currently set without a stated basis and drives nothing. It is the last unsourced value in the system, and it is first on the fix list.</div></div>
+        <div class="row"><div class="h">Built for a pilot, not a fleet</div><div class="b">One team, no access control, and AI capacity on a trial allowance. All three are known work items before wider rollout.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 -->
+  <section class="slide" id="s13">
+    <div class="key">13 &middot; NEXT</div>
+    <div>
+      <h3>What comes next</h3>
+      <h2>The path to production.</h2>
+      <div class="rows">
+        <div class="row"><div class="h"><span class="tag now">Immediate</span>Hold every field to the same standard</div><div class="b">Task priority is either marked as an assumption and routed into the client question list, or removed from view. No unsourced value should sit beside a verified one.</div></div>
+        <div class="row"><div class="h"><span class="tag now">Immediate</span>Process long contracts in the background</div><div class="b">A large document currently holds up the upload. Moving it to a background job with live progress removes both the wait and the duplicate work it causes.</div></div>
+        <div class="row"><div class="h"><span class="tag next">Near term</span>Keep staffing current</div><div class="b">Staffing runs once. Adding a person today does not fill yesterday&rsquo;s empty role. It should re-evaluate.</div></div>
+        <div class="row"><div class="h"><span class="tag next">Near term</span>Decline out-of-scope contracts loudly</div><div class="b">A contract outside our service lines should be refused outright, not quietly turned into a plausible-looking plan.</div></div>
+        <div class="row"><div class="h"><span class="tag later">Investment</span>Commercial AI capacity</div><div class="b">Removes the trial ceiling, cuts processing time substantially, and avoids being locked to a single supplier.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14 -->
+  <section class="slide" id="s14">
+    <div class="key">14 &middot; IN CLOSING</div>
+    <div>
+      <div class="eyebrow">In closing</div>
+      <div class="thesis" style="max-width:32ch">The value is not that it writes the plan. It is that it knows the difference between what the contract said and what it assumed &mdash; and tells you which is which.</div>
+      <p style="margin-top:2.6rem;max-width:56ch">Every competitor can produce a project plan from a document. What a client is buying here is the ability to open any task on the board, six months into delivery, and read the clause that authorised it.</p>
+      <p class="hint" style="margin-top:2.6rem">Architecture and process diagrams are available as separate technical appendices.<br>SOW-to-Project Execution Platform &middot; Board Review &middot; September 2026</p>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  (function () {
+    var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+    var dots = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+    var counter = document.getElementById('counter');
+    var current = 0;
+
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        var i = slides.indexOf(e.target);
+        if (i < 0) return;
+        current = i;
+        dots.forEach(function (d, j) { d.setAttribute('aria-current', j === i ? 'true' : 'false'); });
+        counter.textContent = pad(i + 1) + ' / ' + pad(slides.length);
+      });
+    }, { threshold: 0.55 });
+
+    slides.forEach(function (s) { io.observe(s); });
+
+    function go(delta) {
+      var next = Math.min(slides.length - 1, Math.max(0, current + delta));
+      if (next === current) return;
+      slides[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    document.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+        e.preventDefault(); go(1);
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault(); go(-1);
+      } else if (e.key === 'Home') {
+        e.preventDefault(); slides[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (e.key === 'End') {
+        e.preventDefault(); slides[slides.length - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  })();
+</script>

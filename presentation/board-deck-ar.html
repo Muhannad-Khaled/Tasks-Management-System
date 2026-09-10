@@ -1,0 +1,628 @@
+<title>منصة تحويل الـ SOW لمشروع — الشرح الكامل</title>
+
+<style>
+  :root {
+    --paper:      #FBFBFD;
+    --paper-2:    #F2F3F7;
+    --ink:        #111823;
+    --ink-2:      #3D4658;
+    --ink-3:      #737C90;
+    --rule:       #D8DBE4;
+    --rule-soft:  #E7E9EF;
+    --accent:     #2B3FA8;
+    --accent-dim: #6B78C9;
+    --explicit:   #0F766E;
+    --inferred:   #A16207;
+    --assumed:    #B4304A;
+
+    --ar: "Segoe UI Variable Text", "Segoe UI", Tahoma, "Dubai", "Noto Naskh Arabic", sans-serif;
+    --mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+    --pad: clamp(1.75rem, 5vw, 6rem);
+    --measure: 58ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:     #0D1017;
+      --paper-2:   #161B26;
+      --ink:       #E8EBF2;
+      --ink-2:     #AEB6C6;
+      --ink-3:     #7B8496;
+      --rule:      #2A313F;
+      --rule-soft: #1E242F;
+      --accent:    #93A2F5;
+      --accent-dim:#5B68B8;
+      --explicit:  #4DBFAE;
+      --inferred:  #D9A341;
+      --assumed:   #E8798F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#0D1017; --paper-2:#161B26; --ink:#E8EBF2; --ink-2:#AEB6C6; --ink-3:#7B8496;
+    --rule:#2A313F; --rule-soft:#1E242F; --accent:#93A2F5; --accent-dim:#5B68B8;
+    --explicit:#4DBFAE; --inferred:#D9A341; --assumed:#E8798F;
+  }
+  :root[data-theme="light"] {
+    --paper:#FBFBFD; --paper-2:#F2F3F7; --ink:#111823; --ink-2:#3D4658; --ink-3:#737C90;
+    --rule:#D8DBE4; --rule-soft:#E7E9EF; --accent:#2B3FA8; --accent-dim:#6B78C9;
+    --explicit:#0F766E; --inferred:#A16207; --assumed:#B4304A;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--ar);
+    font-size: clamp(1rem, 0.55vw + 0.88rem, 1.14rem);
+    line-height: 1.85;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .deck { scroll-snap-type: y proximity; scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    .deck { scroll-behavior: auto; }
+    * { animation: none !important; transition: none !important; }
+  }
+
+  .slide {
+    position: relative;
+    min-height: 100svh;
+    scroll-snap-align: start;
+    padding: clamp(3.5rem, 8vh, 6rem) var(--pad) clamp(3rem, 7vh, 5rem);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-bottom: 1px solid var(--rule-soft);
+    overflow-x: hidden;
+  }
+  .slide > * { max-width: 1180px; width: 100%; margin-inline: auto; }
+
+  .key {
+    position: absolute;
+    top: clamp(1.4rem, 3.5vh, 2.4rem);
+    inset-inline-end: var(--pad);
+    max-width: none;
+    width: auto;
+    margin: 0;
+    direction: ltr;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    user-select: none;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 auto 1.3rem;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    direction: ltr;
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+
+  h1 {
+    font-weight: 700;
+    font-size: clamp(2rem, 5vw, 4rem);
+    line-height: 1.28;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 auto 1.5rem;
+  }
+  h2 {
+    font-weight: 700;
+    font-size: clamp(1.6rem, 3.4vw, 2.6rem);
+    line-height: 1.35;
+    text-wrap: balance;
+    margin: 0 auto 1.3rem;
+  }
+  h3 {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    margin: 0 auto 0.7rem;
+    direction: ltr;
+    text-align: right;
+  }
+  h3.ar { font-family: var(--ar); direction: rtl; letter-spacing: 0; text-transform: none; font-size: 0.9rem; color: var(--accent); }
+
+  p { margin: 0 auto 1.05rem; max-width: var(--measure); color: var(--ink-2); }
+  p.lead { font-size: clamp(1.08rem, 1.4vw, 1.32rem); line-height: 1.72; color: var(--ink); max-width: 52ch; }
+  strong { color: var(--ink); font-weight: 700; }
+  em { font-style: normal; color: var(--accent); font-weight: 600; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.86em; color: var(--accent); direction: ltr; display: inline-block; }
+
+  .thesis {
+    font-weight: 700;
+    font-size: clamp(1.35rem, 2.7vw, 2.15rem);
+    line-height: 1.5;
+    color: var(--ink);
+    max-width: 30ch;
+    margin: 0 auto;
+    padding-inline-start: 1.4rem;
+    border-inline-start: 2px solid var(--accent);
+    text-wrap: balance;
+  }
+
+  .steps { display: grid; gap: 0; margin: 1.4rem auto 0; }
+  .step {
+    display: grid;
+    grid-template-columns: 3rem minmax(0, 13rem) minmax(0, 1fr);
+    gap: clamp(0.7rem, 2vw, 2rem);
+    align-items: baseline;
+    padding: 0.9rem 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .step:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .step .n { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); font-variant-numeric: tabular-nums; direction: ltr; }
+  .step .t { font-weight: 700; color: var(--ink); }
+  .step .d { color: var(--ink-2); font-size: 0.97rem; line-height: 1.7; }
+  .noai {
+    font-family: var(--ar);
+    font-size: 0.72rem;
+    color: var(--explicit);
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    padding: 0.05rem 0.4rem;
+    margin-inline-start: 0.5rem;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  @media (max-width: 720px) {
+    .step { grid-template-columns: 2.3rem 1fr; }
+    .step .d { grid-column: 2; }
+  }
+
+  .stamps { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule-soft); margin-top: 1.4rem; }
+  .stamp { background: var(--paper); padding: 1.3rem 1.25rem; }
+  .stamp .label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    display: inline-block;
+    padding: 0.12rem 0.5rem;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    margin-bottom: 0.8rem;
+    direction: ltr;
+  }
+  .stamp.e .label { color: var(--explicit); }
+  .stamp.i .label { color: var(--inferred); }
+  .stamp.a .label { color: var(--assumed); }
+  .stamp p { margin: 0; font-size: 0.97rem; max-width: none; line-height: 1.72; }
+  .stamp .then { display: block; margin-top: 0.65rem; font-size: 0.89rem; color: var(--ink-3); }
+
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: clamp(1rem, 3vw, 2.4rem) 1rem; margin-top: 1.9rem; }
+  .metric .v { font-size: clamp(2rem, 4.2vw, 3.2rem); line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 700; direction: ltr; }
+  .metric .v small { font-size: 0.42em; color: var(--ink-3); font-weight: 400; }
+  .metric .k { font-size: 0.85rem; color: var(--ink-3); margin-top: 0.35rem; line-height: 1.5; }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(265px, 1fr)); gap: clamp(1.3rem, 3.5vw, 3.2rem); margin-top: 1.3rem; }
+  .cols > div > p { max-width: none; }
+
+  .scroll { overflow-x: auto; margin-top: 1.3rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 480px; font-size: 0.96rem; }
+  th, td { text-align: right; padding: 0.6rem 0 0.6rem 1rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th { font-size: 0.8rem; color: var(--ink-3); font-weight: 700; border-bottom-color: var(--rule); }
+  td { color: var(--ink-2); line-height: 1.65; }
+  td.num { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 700; direction: ltr; text-align: right; white-space: nowrap; }
+
+  .tech { display: grid; grid-template-columns: repeat(auto-fit, minmax(225px, 1fr)); gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule-soft); margin-top: 1.4rem; }
+  .tech div { background: var(--paper); padding: 1rem 1.05rem; }
+  .tech .n { font-family: var(--mono); font-size: 0.82rem; color: var(--accent); font-weight: 600; direction: ltr; }
+  .tech .w { font-size: 0.9rem; color: var(--ink-2); margin-top: 0.25rem; line-height: 1.6; }
+
+  .rows { margin-top: 1.3rem; }
+  .row {
+    display: grid;
+    grid-template-columns: minmax(0, 16rem) minmax(0, 1fr);
+    gap: clamp(0.6rem, 2.5vw, 2.4rem);
+    padding: 1rem 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .row:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .row .h { font-weight: 700; color: var(--ink); line-height: 1.6; }
+  .row .b { color: var(--ink-2); font-size: 0.97rem; line-height: 1.75; }
+  .row .h .tag { display: block; font-size: 0.74rem; font-weight: 700; margin-bottom: 0.2rem; }
+  .tag.now { color: var(--assumed); }
+  .tag.next { color: var(--inferred); }
+  .tag.later { color: var(--ink-3); }
+  @media (max-width: 720px) { .row { grid-template-columns: 1fr; gap: 0.3rem; } }
+
+  /* problem / fix pairs */
+  .fix { border-top: 1px solid var(--rule-soft); padding: 1.05rem 0; }
+  .fix:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .fix .p { font-weight: 700; color: var(--ink); display: flex; gap: 0.6rem; align-items: baseline; line-height: 1.6; }
+  .fix .p::before { content: "\26A0"; color: var(--assumed); font-size: 0.95rem; flex: none; }
+  .fix .s { color: var(--ink-2); font-size: 0.96rem; margin-top: 0.4rem; padding-inline-start: 1.55rem; line-height: 1.75; }
+  .fix .s b { color: var(--explicit); font-weight: 700; }
+
+  .refusals { list-style: none; padding: 0; margin: 1.3rem auto 0; }
+  .refusals li { padding: 0.8rem 2.1rem 0.8rem 0; border-top: 1px solid var(--rule-soft); position: relative; color: var(--ink-2); line-height: 1.75; }
+  .refusals li:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .refusals li::before { content: "\00D7"; position: absolute; inset-inline-start: 0.4rem; top: 0.78rem; color: var(--assumed); font-size: 1.15rem; line-height: 1; }
+  .refusals li b { color: var(--ink); font-weight: 700; }
+
+  .chunkdiag { margin-top: 1.5rem; overflow-x: auto; }
+  .chunkdiag svg { display: block; min-width: 560px; width: 100%; height: auto; }
+
+  .rail { position: fixed; inset-inline-end: clamp(0.7rem, 1.6vw, 1.5rem); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 0.5rem; z-index: 20; }
+  .rail a { width: 6px; height: 6px; border-radius: 50%; background: var(--rule); display: block; transition: background .2s, transform .2s; }
+  .rail a:hover { background: var(--accent-dim); transform: scale(1.4); }
+  .rail a[aria-current="true"] { background: var(--accent); transform: scale(1.5); }
+  .rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @media (max-width: 640px) { .rail { display: none; } }
+
+  .counter { position: fixed; bottom: clamp(0.8rem, 2vh, 1.6rem); inset-inline-end: var(--pad); font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; color: var(--ink-3); font-variant-numeric: tabular-nums; z-index: 20; pointer-events: none; direction: ltr; }
+
+  .hint { font-size: 0.85rem; color: var(--ink-3); margin-top: 2.6rem; }
+
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+</style>
+
+<div dir="rtl" lang="ar">
+
+<nav class="rail" aria-label="الشرائح">
+  <a href="#s1" aria-label="شريحة 1"></a><a href="#s2" aria-label="شريحة 2"></a><a href="#s3" aria-label="شريحة 3"></a>
+  <a href="#s4" aria-label="شريحة 4"></a><a href="#s5" aria-label="شريحة 5"></a><a href="#s6" aria-label="شريحة 6"></a>
+  <a href="#s7" aria-label="شريحة 7"></a><a href="#s8" aria-label="شريحة 8"></a><a href="#s9" aria-label="شريحة 9"></a>
+  <a href="#s10" aria-label="شريحة 10"></a><a href="#s11" aria-label="شريحة 11"></a><a href="#s12" aria-label="شريحة 12"></a>
+  <a href="#s13" aria-label="شريحة 13"></a><a href="#s14" aria-label="شريحة 14"></a><a href="#s15" aria-label="شريحة 15"></a>
+</nav>
+<div class="counter" id="counter">01 / 15</div>
+
+<main class="deck">
+
+  <!-- 1 -->
+  <section class="slide" id="s1">
+    <div class="key">01 &middot; نظرة عامة</div>
+    <div>
+      <div class="eyebrow">النسخة الشارحة &middot; سبتمبر 2026</div>
+      <h1>من ورقة عقد<br>لمشروع تقدر تمضي عليه.</h1>
+      <p class="lead">دي نفس قصة العرض الإنجليزي، بس بالمصري ومعاها <strong>الـ &laquo;ليه&raquo;</strong> ورا كل قرار — عشان لو حد سألك في أي نقطة تكون عارف ترد.</p>
+      <p class="hint">استخدم &rarr; &larr; أو اعمل scroll &middot; 15 شريحة</p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide" id="s2">
+    <div class="key">02 &middot; المشكلة</div>
+    <div>
+      <h3 class="ar">المشكلة</h3>
+      <h2>العقد الممضي مش خطة.</h2>
+      <p class="lead">لسه فيه حد لازم يقعد يقرا عشرين صفحة كلام عقود، ويحوّلها بإيده لمهام وتواريخ ومسؤولين ومعايير قبول. ده بياخد أيام من وقت ناس كبيرة، وكل مدير مشروع بيعمله بطريقة مختلفة.</p>
+      <div class="cols">
+        <div>
+          <h3 class="ar">التكلفة</h3>
+          <p>أيام من وقت غالي في كل تعاقد، قبل ما ساعة شغل تسليم واحدة تبدأ.</p>
+        </div>
+        <div>
+          <h3 class="ar">اللي بيضيع</h3>
+          <p>الرابط اللي راجع للعقد. بعد ٦ أسابيع محدش يعرف يجاوب: <em>&laquo;التاسك دي جات من أنهي بند؟&raquo;</em></p>
+        </div>
+        <div>
+          <h3 class="ar">اللي بيتخبّى</h3>
+          <p>الفجوات. العقد ما ذكرش تاريخ إطلاق، فحد اختار واحد — ودخل الخطة شكله شكل حقيقة مؤكدة.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide" id="s3">
+    <div class="key">03 &middot; ليه ده صعب</div>
+    <div>
+      <h3 class="ar">وليه مانرميهوش على أي أداة ذكاء اصطناعي؟</h3>
+      <h2>الإجابة الغلط الواثقة هي الأغلى.</h2>
+      <p class="lead">أي أداة عامة هتطلّعلك خطة مشروع شكلها ممتاز من أي عقد في ٣٠ ثانية. وهتخترعلك كمان تاريخ إطلاق، ونسبة تسعير، واسم جهة موافقة — <strong>بنفس نبرة الثقة</strong> اللي قالت بيها الحاجات الصح.</p>
+      <p>ومفيش طريقة تفرّق. وخطة ماتقدرش تتحقق من مصدرها، هي خطة ماينفعش تمضي عليها، ولا تحاسب بيها، ولا تدافع عنها في خلاف على النطاق.</p>
+      <div style="margin-top:2rem">
+        <div class="thesis">كتابة الخطة هي أسهل حتة. المنتج الحقيقي هو إنك تعرف أنهي جزء فيها العقد فعلاً أذن بيه.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide" id="s4">
+    <div class="key">04 &middot; الفكرة الأساسية</div>
+    <div>
+      <h3 class="ar">الفكرة الأساسية</h3>
+      <h2>كل سطر راجع لأصله في العقد.</h2>
+      <p class="lead">المستند بيتقسّم لمقاطع يُشار ليها أول ما يوصل. ومن اللحظة دي، أي جملة المنصة بتطلّعها بتشيل معاها إشارة للمقطع اللي جت منه — لحد الكارت على البورد.</p>
+      <div class="chunkdiag" role="img" aria-label="سلسلة التتبّع: بند العقد ثم المتطلب ثم المهمة ثم معيار القبول ثم الكارت">
+        <svg viewBox="0 0 640 92" xmlns="http://www.w3.org/2000/svg">
+          <text x="626" y="32" text-anchor="end" font-family="Segoe UI, Tahoma, sans-serif" font-size="15" fill="var(--ink)">بند في العقد</text>
+          <text x="518" y="32" text-anchor="end" font-family="monospace" font-size="15" fill="var(--accent)">&#8592;</text>
+          <text x="492" y="32" text-anchor="end" font-family="Segoe UI, Tahoma, sans-serif" font-size="15" fill="var(--ink-2)">متطلب</text>
+          <text x="424" y="32" text-anchor="end" font-family="monospace" font-size="15" fill="var(--accent)">&#8592;</text>
+          <text x="398" y="32" text-anchor="end" font-family="Segoe UI, Tahoma, sans-serif" font-size="15" fill="var(--ink-2)">مهمة</text>
+          <text x="336" y="32" text-anchor="end" font-family="monospace" font-size="15" fill="var(--accent)">&#8592;</text>
+          <text x="310" y="32" text-anchor="end" font-family="Segoe UI, Tahoma, sans-serif" font-size="15" fill="var(--ink-2)">معيار قبول</text>
+          <text x="212" y="32" text-anchor="end" font-family="monospace" font-size="15" fill="var(--accent)">&#8592;</text>
+          <text x="186" y="32" text-anchor="end" font-family="Segoe UI, Tahoma, sans-serif" font-size="15" font-weight="600" fill="var(--ink)">كارت على البورد</text>
+          <line x1="14" y1="58" x2="626" y2="58" stroke="var(--rule-soft)" stroke-width="1"/>
+          <text x="626" y="84" text-anchor="end" font-family="Segoe UI, Tahoma, sans-serif" font-size="13.5" fill="var(--ink-3)">تفتح أي كارت بعد ٦ شهور من بداية التنفيذ وتقرا البند اللي أذن بيه.</text>
+        </svg>
+      </div>
+      <p style="margin-top:1.5rem">ولو العقد ساكت، المنصة بتقول إنه ساكت. <strong>مابتقفلش الفراغ نيابة عن العميل.</strong></p>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide" id="s5">
+    <div class="key">05 &middot; المخرجات</div>
+    <div>
+      <h3 class="ar">اللي بيطلع</h3>
+      <h2>عقد واحد داخل. خطة شغّالة خارجة.</h2>
+      <div class="steps">
+        <div class="step"><div class="n">01</div><div class="t">تفكيك الشغل لمهام</div><div class="d">موزّع على التجاري والتقني والتشغيل، وكل مهمة مربوطة بالمتطلب اللي بتحققه.</div></div>
+        <div class="step"><div class="n">02</div><div class="t">جدول زمني</div><div class="d">مرتّب بالاعتماديات، والمسار الحرج محدد، والفسحة المتاحة في باقي المهام مكتوبة صراحة.</div></div>
+        <div class="step"><div class="n">03</div><div class="t">مسؤولين</div><div class="d">كل مهمة متسندة للدور اللي بيعملها، ومتعبّية بأسماء من دليل الناس لما يكون فيه مرشح.</div></div>
+        <div class="step"><div class="n">04</div><div class="t">معايير قبول واختبارات</div><div class="d">يعني إيه &laquo;خلصت&raquo; لكل شغلة، بالأرقام اللي العقد فعلاً ذكرها.</div></div>
+        <div class="step"><div class="n">05</div><div class="t">سجل افتراضات</div><div class="d">كل قيمة حطيناها عشان العقد ما حددهاش — مسجّلة وظاهرة، مش مدفونة.</div></div>
+        <div class="step"><div class="n">06</div><div class="t">أسئلة للعميل</div><div class="d">نفس الفجوات، متحوّلة لقايمة تتبعت قبل ما تتحول لطلبات تغيير.</div></div>
+      </div>
+      <p style="margin-top:1.5rem">وكل ده بينزل على بورد التسليم اللي الفريق شغال عليه أصلاً.</p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide" id="s6">
+    <div class="key">06 &middot; المعروف والمفترض</div>
+    <div>
+      <h3 class="ar">الفرق اللي بيفرق</h3>
+      <h2>اللي العقد قاله، واللي احنا افترضناه.</h2>
+      <p class="lead">كل قيمة في الخطة بتاخد ختم بيقول <strong>جت إزاي</strong>. الفرق ده لوحده هو اللي بيفرّق المنصة عن مستند كلامه مقنع وبس.</p>
+      <div class="stamps">
+        <div class="stamp e"><span class="label">مذكور</span><p>العقد قايله بالنص.</p><span class="then">شايل إشارة للمقطع بالظبط.</span></div>
+        <div class="stamp i"><span class="label">مستنتج</span><p>بيتبع من حاجة العقد فعلاً قالها.</p><span class="then">شايل المقطع اللي اتستنتج منه.</span></div>
+        <div class="stamp a"><span class="label">مفترض</span><p>العقد ساكت، واحنا حطينا قيمة شغّالة عشان التخطيط ما يقفش.</p><span class="then">بيتحول <em>افتراض مسجّل</em> + <em>سؤال للعميل</em>.</span></div>
+      </div>
+      <p style="margin-top:1.5rem">على عقد NileBank ده طلّع <strong>٩ افتراضات و٩ أسئلة</strong> — كل واحد فيهم مكالمة تجارية تستاهل تتعمل <em>قبل</em> ما التنفيذ يبدأ، مش بعده.</p>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide" id="s7">
+    <div class="key">07 &middot; التحقق</div>
+    <div>
+      <h3 class="ar">التحقق</h3>
+      <h2>بنفحص كل جملة، مش الخطة كوحدة.</h2>
+      <p class="lead">المهمة مابتتقيّمش مرة واحدة وتعدّي. بتتفكك للجُمَل اللي بتوعد بيها — <em>دي هتاخد ١٥ ساعة</em>، <em>دي مسؤولية مدير الحساب</em>، <em>دي ماتبدأش قبل التوقيع</em> — وكل واحدة بتتفحص لوحدها.</p>
+      <p>والسبب بسيط: المهمة ممكن تكون <strong>صح تمامًا في الشغل وغلط بهدوء في المدة</strong>. الدرجة الواحدة الإجمالية بتخبّي بالظبط التفصيلة اللي مدير المشروع محتاج يمسكها.</p>
+      <div style="margin-top:1.8rem">
+        <div class="thesis" style="max-width:34ch">الجملة اللي العقد مابيسندهاش بتتعلّم، مش بتتمسح على.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide" id="s8">
+    <div class="key">08 &middot; المساءلة</div>
+    <div>
+      <h3 class="ar">السيطرة</h3>
+      <h2>مفيش حاجة بتوصل الفريق من غير موافقة باسم.</h2>
+      <p class="lead">المنصة مابتنشرش من نفسها أبدًا. بتجهّز الخطة، وتحط قدام مدير المشروع كل افتراض وكل مهمة ضعيفة وكل سؤال مفتوح، وتستنى.</p>
+      <div class="cols">
+        <div>
+          <h3 class="ar">قبل الموافقة</h3>
+          <p>يقدر يعدّل أي مهمة، يعيد توليد الضعيفة، يجاوب سؤال، أو يرفض الخطة كلها. وكل حركة بتتسجل.</p>
+        </div>
+        <div>
+          <h3 class="ar">بعد الموافقة</h3>
+          <p>الكروت بتتحدّث مش بتتكرر. ولو حد عدّل أو مسح كارت بعدين، المدير بيتقاله إن الخطة والبورد بقوا مختلفين.</p>
+        </div>
+        <div>
+          <h3 class="ar">المسؤولية</h3>
+          <p>فيه بني آدم بيوقّع. وشغلة المنصة إنها تتأكد إن الشخص ده شايف بالظبط هو بيوقّع على إيه.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide" id="s9">
+    <div class="key">09 &middot; الدليل</div>
+    <div>
+      <h3 class="ar">نتيجة حقيقية &middot; NileBank</h3>
+      <h2>عقد واحد، من الأول للآخر.</h2>
+      <div class="metrics">
+        <div class="metric"><div class="v">12</div><div class="k">مهمة مجدولة</div></div>
+        <div class="metric"><div class="v">1,138</div><div class="k">ساعة تقديرية</div></div>
+        <div class="metric"><div class="v">90<small>%</small></div><div class="k">من الجُمَل اتحققت</div></div>
+        <div class="metric"><div class="v">9</div><div class="k">أسئلة اتطرحت</div></div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>اللي اتولّد</th><th>العدد</th><th>ملاحظة</th></tr></thead>
+          <tbody>
+            <tr><td>متطلبات</td><td class="num">5</td><td>كل واحد مربوط بقسم العقد اللي قاله</td></tr>
+            <tr><td>مهام مجدولة ومرتبة</td><td class="num">12</td><td>على تلات فرق: تجاري وتقني وتشغيل</td></tr>
+            <tr><td>أدوار معرّفة / متعبّية</td><td class="num">11 / 7</td><td>٤ أدوار لسه مالهاش مرشح في الدليل</td></tr>
+            <tr><td>معايير قبول</td><td class="num">21</td><td>أي رقم العقد ما ذكروش بيترفض</td></tr>
+            <tr><td>حالات اختبار</td><td class="num">9</td><td>بتتعلّم لو قايمة على قيمة مفترضة</td></tr>
+            <tr><td>افتراضات &larr; أسئلة</td><td class="num">9 &larr; 9</td><td>اتطرحت قبل التنفيذ، مش وسطه</td></tr>
+            <tr><td>كروت اتنشرت</td><td class="num">12</td><td>بعد موافقة مدير المشروع</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:1.2rem;font-size:0.92rem;color:var(--ink-3)">أضعف مهمة جابت 33% واتعلّمت للمراجعة بدل ما تعدّي بالساكت. ده السلوك المقصود، مش عيب.</p>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section class="slide" id="s10">
+    <div class="key">10 &middot; الحاجة اللي بتفرّق</div>
+    <div>
+      <h3 class="ar">الحاجة اللي بتفرّق</h3>
+      <h2>المنصة بترفض تعمل إيه.</h2>
+      <ul class="refusals">
+        <li><b>بترفض مستند مش قادرة تقراه فعلاً.</b> عقد مسكانّ بيوقّف العملية بدل ما يطلّع خطة فاضية شكلها كامل.</li>
+        <li><b>بترفض تقول &laquo;نجحت&raquo; على نتيجة فاضية.</b> لو ما طلعش أي شغل، بتحاول مرة وبعدين تبلّغ فشل.</li>
+        <li><b>بترفض تذكر رقم مالوش مصدر.</b> الرقم اللي في معيار القبول ومش مسنود بيتشال.</li>
+        <li><b>بترفض تخترع ناس.</b> الشغل بيتسند لأدوار، والأسامي بتيجي من دليل حقيقي بس.</li>
+        <li><b>بترفض تملا السكوت.</b> اللي العقد ما حددوش، الكارت بيقوله بالكلام.</li>
+      </ul>
+      <p style="margin-top:1.8rem"><strong>الرفض ده هو المنتج.</strong> أي حاجة تقدر تولّد خطة. القيمة التجارية في نظام عارف حدود اللي اتقاله — وبيقف عندها.</p>
+    </div>
+  </section>
+
+  <!-- 11 -->
+  <section class="slide" id="s11">
+    <div class="key">11 &middot; الضمانات</div>
+    <div>
+      <h3 class="ar">إزاي نعرف إنه شغال</h3>
+      <h2>قابل للمراجعة بحكم بنائه.</h2>
+      <div class="metrics">
+        <div class="metric"><div class="v">502</div><div class="k">اختبار آلي</div></div>
+        <div class="metric"><div class="v">9</div><div class="k">فحوصات مستقلة لكل خطة</div></div>
+        <div class="metric"><div class="v">39</div><div class="k">فجوة تخطيط بتتدقّق</div></div>
+        <div class="metric"><div class="v">100<small>%</small></div><div class="k">من نشاط الـ AI مسجّل</div></div>
+      </div>
+      <div class="cols" style="margin-top:2.2rem">
+        <div>
+          <h3 class="ar">كل حاجة متسجّلة</h3>
+          <p>كل طلب راح للـ AI والرد اللي رجع، متخزّن على المشروع اللي خدمه. أي مخرَج من شهور تقدر ترجّعه للتعليمة اللي عملته.</p>
+        </div>
+        <div>
+          <h3 class="ar">الفحوصات مش AI</h3>
+          <p>الجدولة والتحقق وسجل المراجعة كلهم برمجة عادية. الـ AI عمره ما بيتطلب منه يصحّح لنفسه.</p>
+        </div>
+        <div>
+          <h3 class="ar">مفيش فشل صامت</h3>
+          <p>الفشل بيتبلّغ كفشل. النظام متبني على مبدأ إن <strong>النتيجة الغلط أخطر من مفيش نتيجة</strong>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12 -->
+  <section class="slide" id="s12">
+    <div class="key">12 &middot; الدروس</div>
+    <div>
+      <h3 class="ar">دروس من بناء المنصة</h3>
+      <h2>حاجات ما كانتش واضحة من بره.</h2>
+      <div>
+        <div class="fix">
+          <div class="p">النجاح الفاضي أخطر من الفشل الواضح</div>
+          <div class="s">مرة النظام طلّع مشروع من غير أي مهام، والواجهة قالت <b>بالأخضر</b> إن كل حاجة تمام. ومن ساعتها القاعدة بقت: أي نتيجة فاضية تتبلّغ كفشل، مش كنجاح.</div>
+        </div>
+        <div class="fix">
+          <div class="p">أي حاجة تتحسب، ما تسألش الـ AI عليها</div>
+          <div class="s">كل ما نقدر ننقل حاجة من الـ AI للبرمجة العادية، بتبقى <b>أرخص وأثبت وقابلة للمراجعة</b>. أسئلة العميل مثلاً بتتولّد من التدقيق حسابيًا — بصفر تكلفة وبدقة أعلى من إن الـ AI يألّفها.</div>
+        </div>
+        <div class="fix">
+          <div class="p">القرار الصح بيتاخد بالبيانات مش بالإحساس</div>
+          <div class="s">فضلنا نغيّر إعدادات معينة عشان &laquo;حاسين&raquo; إنها بتقع كتير. بصينا على الأرقام الحقيقية فطلع التغيير هيخلّي كل تشغيلة أبطأ ٤ مرات. <b>سيبناها زي ما هي.</b></div>
+        </div>
+        <div class="fix">
+          <div class="p">الاختبار اللي بيتحقق من رقم مخترع أسوأ من مفيش اختبار</div>
+          <div class="s">لو رقم مفترض دخل حالة اختبار، مهندس الجودة هيجرّبها ويقول &laquo;تمام&raquo; — وهو بيصدّق على حاجة احنا اللي اخترعناها. دلوقتي أي اختبار قايم على افتراض <b>بيظهر بتحذير واضح</b>.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 -->
+  <section class="slide" id="s13">
+    <div class="key">13 &middot; التنازلات</div>
+    <div>
+      <h3 class="ar">التنازلات</h3>
+      <h2>حاجات تنازلنا عنها بوعي.</h2>
+      <div class="rows">
+        <div class="row"><div class="h">أدوار مش أسامي</div><div class="b">الشغل بيتسند لدور مش لشخص. مفيش ربط بنظام موارد بشرية، وتأليف أسامي هو بالظبط الغلط اللي المنصة موجودة تمنعه. السعر: مدير المشروع لسه بيوزّع بإيده.</div></div>
+        <div class="row"><div class="h">بورد التسليم هو الحلقة الأضعف</div><div class="b">الخطة الكاملة عايشة في نظامنا، والبورد شايل ملخص منها. لو التتبّع المنظّم جوه البورد بقى مطلب، ده الجزء اللي يتغيّر.</div></div>
+        <div class="row"><div class="h">حقل واحد لسه مش على نفس المستوى</div><div class="b">أولوية المهمة بتتحدد من غير أساس معلن ومابتأثرش في أي حساب. هي آخر قيمة مالهاش مصدر في النظام، وأول حاجة في قايمة الإصلاح.</div></div>
+        <div class="row"><div class="h">مبني لتجربة، مش لأسطول</div><div class="b">فريق واحد، بلا صلاحيات، وسعة الـ AI على باقة تجريبية. التلاتة معروفين كشغل لازم يتعمل قبل التوسّع.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14 -->
+  <section class="slide" id="s14">
+    <div class="key">14 &middot; الخطوة الجاية</div>
+    <div>
+      <h3 class="ar">التوصيات</h3>
+      <h2>الطريق للإنتاج.</h2>
+      <div class="rows">
+        <div class="row"><div class="h"><span class="tag now">عاجل</span>كل حقل على نفس المعيار</div><div class="b">الأولوية إمّا تتعلّم كافتراض وتدخل قايمة أسئلة العميل، أو تتشال من الواجهة. مفيش قيمة مالهاش مصدر تقعد جنب قيمة متحقّقة.</div></div>
+        <div class="row"><div class="h"><span class="tag now">عاجل</span>العقود الطويلة تتعالج في الخلفية</div><div class="b">المستند الكبير دلوقتي بيعطّل الرفع. لما يبقى مهمة خلفية بحالة مباشرة، الانتظار بيختفي والشغل المكرر اللي بيسببه كمان.</div></div>
+        <div class="row"><div class="h"><span class="tag next">قريب</span>التوظيف يفضل محدّث</div><div class="b">بيتنفّذ مرة واحدة وخلاص. لو ضفت حد للدليل النهاردة، الأدوار الفاضية القديمة هتفضل فاضية. لازم يعيد التقييم.</div></div>
+        <div class="row"><div class="h"><span class="tag next">قريب</span>رفض العقود اللي بره نطاقنا بصوت عالي</div><div class="b">عقد بره خطوط خدمتنا لازم يترفض صراحة، مش يتحول بهدوء لخطة شكلها سليم.</div></div>
+        <div class="row"><div class="h"><span class="tag later">استثمار</span>سعة AI تجارية</div><div class="b">بتشيل سقف الباقة التجريبية، وبتقلّل زمن المعالجة بشكل كبير، وبتمنع الارتباط بمورّد واحد.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15 -->
+  <section class="slide" id="s15">
+    <div class="key">15 &middot; الخلاصة</div>
+    <div>
+      <div class="eyebrow">الخلاصة</div>
+      <div class="thesis" style="max-width:38ch">القيمة مش إنه بيكتب الخطة. القيمة إنه عارف الفرق بين اللي العقد قاله واللي هو افترضه — وبيقولهولك.</div>
+      <p style="margin-top:2.4rem;max-width:52ch">أي منافس يقدر يطلّع خطة مشروع من مستند. اللي العميل بيشتريه هنا هو إنه يفتح أي مهمة على البورد، بعد ٦ شهور من التنفيذ، ويقرا البند اللي أذن بيها.</p>
+      <p class="hint" style="margin-top:2.4rem">التفاصيل التقنية موجودة في رسمتين منفصلتين: معمارية النظام، وخط المعالجة.</p>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<script>
+  (function () {
+    var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+    var dots = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+    var counter = document.getElementById('counter');
+    var current = 0;
+
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        var i = slides.indexOf(e.target);
+        if (i < 0) return;
+        current = i;
+        dots.forEach(function (d, j) { d.setAttribute('aria-current', j === i ? 'true' : 'false'); });
+        counter.textContent = pad(i + 1) + ' / ' + pad(slides.length);
+      });
+    }, { threshold: 0.55 });
+
+    slides.forEach(function (s) { io.observe(s); });
+
+    function go(delta) {
+      var next = Math.min(slides.length - 1, Math.max(0, current + delta));
+      if (next === current) return;
+      slides[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    document.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      // RTL: the left arrow advances, the right arrow goes back.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+        e.preventDefault(); go(1);
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault(); go(-1);
+      } else if (e.key === 'Home') {
+        e.preventDefault(); slides[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (e.key === 'End') {
+        e.preventDefault(); slides[slides.length - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  })();
+</script>
