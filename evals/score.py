@@ -54,7 +54,7 @@ GOLD = CORPUS / "gold"
 # tests exercise; it is simply not scored here, which keeps a full run to two
 # documents and ten calls against a 20/day quota. Put the line back to score it.
 DOCS = [
-    ("sow_a_cairomart", "SOW-EV-A"),
+    ("sow_a_cairomart", "SOW-EV-A"), 
     ("sow_b_quickbite", "SOW-EV-B"),
 ]
 
